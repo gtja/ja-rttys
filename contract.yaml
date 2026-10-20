@@ -1,11 +1,11 @@
 plane_work_item: local-rttys-tenant
-slice: tenant-local group management and union device authorization
+slice: RTTY console information architecture and visual redesign
 lane: high-risk
 base_branch: master
 claim:
   kind: integration_health
-  statement: Tenant-scoped group CRUD and multi-group device access preserve any remaining
-    authorization
+  statement: Readable role-aware console navigation, focused device operations and
+    preserved management workflows
   intent_ref: user-request-this-chat
   does_not_prove:
   - production readiness
@@ -14,10 +14,11 @@ claim:
 business:
   actor: tenant administrators and device operators
   workflow: enroll devices, grant access, operate terminal/files/web, revoke access
-  problem: single device group and unconditional session revocation prevent multi-team
-    maintenance
-  baseline: 4d022ee supports one group and closes all user leases on grant edits
-  target: multi-group membership with union authorization and selective lease invalidation
+  problem: single long management page and terminal gray theme make administration
+    cluttered
+  baseline: a851304 stacks all management sections
+  target: separate navigable functional sections with legible light surfaces and clear
+    hierarchy
   outcome: independently usable authenticated remote maintenance platform
   evidence_sources:
   - DELIVERY.md
@@ -81,21 +82,21 @@ invariants:
 - existing edge-manager edits and other remote services are untouched
 - no secrets are committed
 acceptance:
-- id: AC-G1
-  given: tenant administrators and existing single-group data
-  when: migrate, create, rename, delete groups and assign devices to multiple groups
-  then: legacy membership persists, changes are atomic and tenant scoped, deleted
-    grants never resurrect
-- id: AC-G2
-  given: live terminal file and proxy with multiple grant sources
-  when: remove one group grant or membership then remove the last effective grant
-  then: remaining access preserves channels; zero access closes channels and denies
-    new ones
-- id: AC-G3
-  given: 204 test deployment and 156 real NVIDIA client
-  when: manage groups in browser and replay multi-group authorization
-  then: group management is usable and real terminal/file/proxy demonstrate union
-    and revocation
+- id: UI-1
+  given: tenant admin on desktop
+  when: open workspace and navigate sections
+  then: light console has clear navigation, device metrics, focused tables and separate
+    groups members access audit sections
+- id: UI-2
+  given: current device groups and members
+  when: open group settings and browse management
+  then: existing selection, save/cancel, enrollment and membership controls remain
+    available without changing authorization APIs
+- id: UI-3
+  given: operator and login page
+  when: sign in and open console
+  then: login is readable, restricted management navigation stays hidden and device
+    actions remain available
 proof:
   evidence_tier: deployment-real
   acceptance_owner: user
