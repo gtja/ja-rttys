@@ -232,6 +232,117 @@ func run() {
 	r = call(admin, "POST", "/api/tenant", map[string]string{"tenant_id": f.TenantA["id"]})
 	check("admin switch A", r.StatusCode == 200, r.StatusCode)
 	r.Body.Close()
+
+	// Multi-group policy oracle: real channels must survive any remaining grant.
+	mutate := func(name, method, path string, body any, expected int) {
+		r := call(admin, method, path, body)
+		check(name, r.StatusCode == expected, r.StatusCode)
+		r.Body.Close()
+	}
+	r = call(admin, "GET", "/api/manage/snapshot", nil)
+	var snapshot map[string]any
+	json.NewDecoder(r.Body).Decode(&snapshot)
+	r.Body.Close()
+	check("legacy group membership preserved", bytes.Contains(mustJSON(snapshot["device_groups"]), []byte("lab")), snapshot["device_groups"])
+	mutate("create group project", "POST", "/api/manage/groups", map[string]string{"name": "project"}, 201)
+	mutate("create group maintenance", "POST", "/api/manage/groups", map[string]string{"name": "maintenance"}, 201)
+	mutate("duplicate group denied", "POST", "/api/manage/groups", map[string]string{"name": "project"}, 409)
+	mutate("restore operator membership", "PUT", "/api/manage/members", map[string]string{"user_id": f.Users["operator"]["id"], "role": "operator"}, 200)
+	op := login(f.Users["operator"]["username"], f.Password)
+	r = call(op, "POST", "/api/manage/groups", map[string]string{"name": "illegal"})
+	check("operator cannot manage groups", r.StatusCode == 403, r.StatusCode)
+	r.Body.Close()
+	mutate("two memberships", "PUT", "/api/manage/devices/"+f.DeviceA["id"]+"/groups", map[string]any{"groups": []string{"project", "maintenance"}}, 200)
+	mutate("foreign device membership denied", "PUT", "/api/manage/devices/"+f.DeviceB["id"]+"/groups", map[string]any{"groups": []string{"project"}}, 404)
+	mutate("unknown group rejected atomically", "PUT", "/api/manage/devices/"+f.DeviceA["id"]+"/groups", map[string]any{"groups": []string{"project", "missing"}}, 404)
+	grant := func(group, device string, access bool) {
+		mutate("grant mutation "+group+device, "PUT", "/api/manage/grants", map[string]any{"user_id": f.Users["operator"]["id"], "group": group, "device_id": device, "access": access}, 200)
+	}
+	grant("project", "", true)
+	grant("maintenance", "", true)
+	for _, group := range []string{"project", "maintenance"} {
+		r = call(op, "GET", "/api/devs?group="+group, nil)
+		var rows []map[string]any
+		json.NewDecoder(r.Body).Decode(&rows)
+		r.Body.Close()
+		check("membership filter "+group, len(rows) == 1 && rows[0]["id"] == f.DeviceA["id"], rows)
+	}
+	oh := http.Header{"Origin": []string{base}}
+	for _, c := range op.Jar.Cookies(req.URL) {
+		oh.Add("Cookie", c.String())
+	}
+	openOperator := func() *websocket.Conn {
+		w, _, err := dial.Dial(wsURL, oh)
+		if err != nil {
+			panic(err)
+		}
+		w.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, msg, err := w.ReadMessage()
+		check("group authorized terminal opens", err == nil && bytes.Contains(msg, []byte("login")), string(msg))
+		return w
+	}
+	ow := openOperator()
+	defer ow.Close()
+	r = call(op, "GET", "/api/web/"+f.DeviceA["id"]+"/http/127.0.0.1:8080/", nil)
+	check("group proxy issued", r.StatusCode == 302, r.StatusCode)
+	oticket := r.Header.Get("Location")
+	r.Body.Close()
+	r, e = pc.Get(oticket)
+	if e != nil {
+		panic(e)
+	}
+	io.Copy(io.Discard, r.Body)
+	r.Body.Close()
+	opProxy := r.Request.URL.String()
+	alive := func(label string) {
+		ow.SetReadDeadline(time.Now().Add(5 * time.Second))
+		ow.WriteMessage(websocket.BinaryMessage, []byte{1, proto.MsgTypeFileData, 4, 5, 6})
+		_, msg, err := ow.ReadMessage()
+		check(label+" file remains", err == nil && bytes.Equal(msg, []byte{1, 4, 5, 6}), msg)
+		ow.WriteMessage(websocket.BinaryMessage, []byte{0, 'O', 'K'})
+		_, msg, err = ow.ReadMessage()
+		check(label+" terminal remains", err == nil && bytes.Equal(msg, []byte{0, 'O', 'K'}), msg)
+		r, err := pc.Get(opProxy)
+		if err != nil {
+			panic(err)
+		}
+		check(label+" proxy remains", r.StatusCode == 200, r.StatusCode)
+		r.Body.Close()
+	}
+	denied := func(label string) {
+		ow.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, _, err := ow.ReadMessage()
+		check(label+" existing channel closed", err != nil, fmt.Sprint(err))
+		r, err := pc.Get(opProxy)
+		if err != nil {
+			panic(err)
+		}
+		check(label+" proxy revoked", r.StatusCode == 401, r.StatusCode)
+		r.Body.Close()
+		_, res, err := dial.Dial(wsURL, oh)
+		check(label+" new channel denied", err != nil && res != nil && res.StatusCode == 403, "403 expected")
+	}
+	grant("project", "", false)
+	alive("remaining group")
+	mutate("rename granted group", "PATCH", "/api/manage/groups/maintenance", map[string]string{"name": "renamed"}, 200)
+	alive("renamed group")
+	grant("", f.DeviceA["id"], true)
+	mutate("remove all group memberships", "PUT", "/api/manage/devices/"+f.DeviceA["id"]+"/groups", map[string]any{"groups": []string{}}, 200)
+	alive("direct device grant")
+	grant("", f.DeviceA["id"], false)
+	denied("last direct grant removed")
+	mutate("restore group membership", "PUT", "/api/manage/devices/"+f.DeviceA["id"]+"/groups", map[string]any{"groups": []string{"renamed"}}, 200)
+	ow = openOperator()
+	defer ow.Close()
+	mutate("delete last authorized group", "DELETE", "/api/manage/groups/renamed", nil, 200)
+	ow.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _, e = ow.ReadMessage()
+	check("group delete closes channel", e != nil, fmt.Sprint(e))
+	mutate("recreate same name", "POST", "/api/manage/groups", map[string]string{"name": "renamed"}, 201)
+	mutate("rejoin recreated group", "PUT", "/api/manage/devices/"+f.DeviceA["id"]+"/groups", map[string]any{"groups": []string{"renamed"}}, 200)
+	r = call(op, "GET", "/api/connect/"+f.DeviceA["id"], nil)
+	check("deleted grants never resurrect", r.StatusCode == 403, r.StatusCode)
+	r.Body.Close()
 	r = call(admin, "DELETE", "/api/manage/members/"+f.Users["alice"]["id"], nil)
 	check("revoke active owner membership", r.StatusCode == 200, r.StatusCode)
 	r.Body.Close()
@@ -264,4 +375,12 @@ func run() {
 	r = call(admin, "POST", "/api/signin", map[string]string{"username": "admin", "password": "intentionally-wrong"})
 	check("own login cannot reset another account throttle", r.StatusCode == 429, r.StatusCode)
 	r.Body.Close()
+}
+
+func mustJSON(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }

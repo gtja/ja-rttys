@@ -59,6 +59,7 @@ type TenantDevice struct {
 	Tenant     string   `json:"tenant_id"`
 	WireID     string   `json:"wire_id"`
 	Group      string   `json:"group"`
+	Groups     []string `json:"groups"`
 	Name       string   `json:"name"`
 	Disabled   bool     `json:"disabled"`
 	WebTargets []string `json:"web_targets"`
@@ -104,6 +105,10 @@ func openTenantAuth(srv *RttyServer) (*TenantAuth, error) {
  CREATE INDEX IF NOT EXISTS device_tenant ON devices(tenant);
  CREATE INDEX IF NOT EXISTS session_user ON sessions(user);`
 	if _, err = db.Exec(schema); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err = migrateGroups(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -189,6 +194,13 @@ func (a *TenantAuth) deviceLocked(id string) (*TenantDevice, error) {
 	if err = json.Unmarshal([]byte(targets), &d.WebTargets); err != nil {
 		return nil, err
 	}
+	d.Groups, err = a.groupsLocked(d.Tenant, d.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(d.Groups) > 0 {
+		d.Group = d.Groups[0]
+	}
 	return d, nil
 }
 func (a *TenantAuth) allowedLocked(p *Actor, d *TenantDevice, operate bool) bool {
@@ -205,7 +217,7 @@ func (a *TenantAuth) allowedLocked(p *Actor, d *TenantDevice, operate bool) bool
 		return false
 	}
 	var n int
-	err := a.db.QueryRow("SELECT count(*) FROM grants WHERE tenant=? AND user=? AND (device=? OR (device='' AND grp=?))", p.Tenant, p.ID, d.ID, d.Group).Scan(&n)
+	err := a.db.QueryRow("SELECT count(*) FROM grants g WHERE g.tenant=? AND g.user=? AND (g.device=? OR (g.device='' AND EXISTS (SELECT 1 FROM device_groups dg WHERE dg.tenant=g.tenant AND dg.device=? AND dg.grp=g.grp)))", p.Tenant, p.ID, d.ID, d.ID).Scan(&n)
 	return err == nil && n > 0
 }
 func (a *TenantAuth) access(sid, id string, operate bool) (*Actor, *TenantDevice, error) {

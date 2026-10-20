@@ -11,3 +11,6 @@ First release is single instance, SQLite; users have tenant memberships; grants 
 Boundaries: API/device TLS required; proxy uses a separate configured origin and short-lived server-side sessions. Test credentials remain outside source control. Runtime revocation is fail-closed; no anonymous fallback. Bootstrap admin from a local password file only.
 
 Rollback: stop only rttys-tenant-poc server/client services, retain data and binary backups. No production cutover. Evidence distinguishes simulated transport fixture from actual NVIDIA-device validation. Browser acceptance recorded separately.
+
+## Multi-group increment
+User requests independent group CRUD, multi-group membership within one tenant and union authorization. Failure modes: lost legacy membership/grants; foreign-tenant group or device mutation; duplicate/invalid names; partial membership replacement; rename losing grants; deletion resurrecting grants; revoking one grant disconnecting a still-authorized session; removing last group/direct grant leaving terminal/file/proxy open; restart restoring deleted membership. E2E extends the existing real-server socket oracle before implementation. Test deployment only on 204 with 156; stopped-database plus binary backup is required for rollback.

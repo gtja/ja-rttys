@@ -1,6 +1,6 @@
 # rttys tenant-auth first release
 
-Standalone fork of rttys upstream `bc1ac60478172aa984c551652a0b1e1ff2a782bc` (v5.6.0 family). Server version: `5.6.0-tenant.1`. Single process, SQLite identity store; no external account platform is required.
+Standalone fork of rttys upstream `bc1ac60478172aa984c551652a0b1e1ff2a782bc` (v5.6.0 family). Server version: `5.6.0-tenant.2`. Single process, SQLite identity store; no external account platform is required.
 
 ## Implemented boundary
 
@@ -72,3 +72,15 @@ Stop only `rttys-tenant-poc` on 204 and `rtty-tenant-poc` on 156. Existing rtty,
 This is a test candidate, not a production rollout. Not covered: HA, external identity providers, approval workflows, arbitrary OS-command policies, terminal recording, bulk fleet migration, large-file/weak-network endurance, tenant ownership transfer, and device credential cloning with a valid stolen secret. A copied valid bearer secret is not hardware attestation. Certificate issuance, backup retention and Internet-facing DoS controls require deployment-specific decisions.
 
 Independent security review identified and drove fixes for public proxy-host credential inference and cross-account throttle resetting. The failing and passing replay evidence are retained in the delivery record. Authentication, proxy and transport failures are reported separately from browser/provider limitations.
+
+## Multi-group management (tenant.2)
+
+Login as tenant-admin, open 管理 → 分组管理 to create, rename or delete tenant-local groups. Under 登记设备, use 设置分组 on an existing device and select multiple groups. New enrollment also offers multiple selection. Operator grants select either one device or a group. Device group lists/search display every membership.
+
+Authorization is a union: any direct device grant or grant on any current device group permits operation. Removing one source preserves existing terminal/file/proxy channels if another source still permits access. Removing the last source closes existing channels and denies new access. Rename preserves memberships and grants. Delete removes memberships and grants, never devices; recreating a name does not restore old grants. Viewers remain read-only; groups cannot bridge tenants.
+
+API: POST /api/manage/groups {name}; PATCH /api/manage/groups/:name {name}; DELETE /api/manage/groups/:name; PUT /api/manage/devices/:id/groups {groups:[name,...]}. Names in paths must be URL encoded. Replacement is atomic, [] clears groups, missing/null groups is rejected. Snapshot contains groups and device_groups; /api/devs returns groups plus a compatibility first-group field. The legacy enrollment group parameter remains supported but no longer owns policy. SQLite schema v2 migrates both existing device groups and preexisting group grants once, transactionally.
+
+Before upgrading stop the single server and back up its binary and identity.db together. Migration clears the legacy group column; rollback MUST restore both stopped-instance database and matching old binary. Never run an old binary against the migrated database. Existing clients and device credentials do not change.
+
+Replay: build cmd/tenant-e2e as /tmp/rttys-groups-check and the new server as /tmp/rttys-groups; run RTTY_BINARY=/tmp/rttys-groups RTTY_SOCKET_BINARY=/tmp/rttys-groups-check python3 scripts/run-local-e2e.py. Set RTTY_LEGACY_BINARY to the tenant.1 binary to verify real database migration. Set RTTY_GROUPS=1 when running cmd/tenant-live-check to test two group grants on the real device; it restores the original memberships/direct test grant and deletes temporary groups afterwards.

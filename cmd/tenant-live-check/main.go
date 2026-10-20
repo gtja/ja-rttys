@@ -106,6 +106,41 @@ func run() {
 		r.Body.Close()
 	}
 	check("real device online", len(devices) == 1 && devices[0]["online"] == true, devices)
+	groupMode := os.Getenv("RTTY_GROUPS") == "1"
+	ga, gb := "e2e-project-"+fmt.Sprint(time.Now().Unix()), "e2e-maintenance-"+fmt.Sprint(time.Now().Unix())
+	mutate := func(name, method, path string, body any, expected int) {
+		r := call(admin, method, path, body)
+		check(name, r.StatusCode == expected, r.StatusCode)
+		r.Body.Close()
+	}
+	groupGrant := func(group string, access bool) {
+		mutate("real group grant "+group, "PUT", "/api/manage/grants", map[string]any{"user_id": f.Users["operator"].ID, "group": group, "access": access}, 200)
+	}
+	if groupMode {
+		original := []string{}
+		if gs, ok := devices[0]["groups"].([]any); ok {
+			for _, g := range gs {
+				original = append(original, g.(string))
+			}
+		}
+		defer func() {
+			r := call(admin, "PUT", "/api/manage/grants", map[string]any{"user_id": f.Users["operator"].ID, "device_id": f.Device["id"], "access": true})
+			r.Body.Close()
+			r = call(admin, "PUT", "/api/manage/devices/"+f.Device["id"]+"/groups", map[string]any{"groups": original})
+			r.Body.Close()
+			for _, g := range []string{ga, gb} {
+				r = call(admin, "DELETE", "/api/manage/groups/"+g, nil)
+				r.Body.Close()
+			}
+		}()
+		for _, g := range []string{ga, gb} {
+			mutate("real create group "+g, "POST", "/api/manage/groups", map[string]string{"name": g}, 201)
+		}
+		mutate("real device two groups", "PUT", "/api/manage/devices/"+f.Device["id"]+"/groups", map[string]any{"groups": []string{ga, gb}}, 200)
+		groupGrant(ga, true)
+		groupGrant(gb, true)
+		mutate("remove direct grant with groups remaining", "PUT", "/api/manage/grants", map[string]any{"user_id": f.Users["operator"].ID, "device_id": f.Device["id"], "access": false}, 200)
+	}
 	headers := http.Header{}
 	rq, _ := http.NewRequest("GET", f.URL, nil)
 	for _, c := range op.Jar.Cookies(rq.URL) {
@@ -153,6 +188,9 @@ func run() {
 		read()
 	}
 	check("real terminal nvidia account", strings.Contains(terminal, "RTTY_REAL_DEVICE_PROOF") && strings.Contains(terminal, "aarch64"), terminal)
+	if groupMode {
+		groupGrant(ga, false)
+	} // Remaining group must preserve this terminal and its file transfer.
 	send("dir=$(mktemp -d /tmp/rttys-e2e.XXXXXX); cd \"$dir\"; /usr/local/bin/rtty-tenant-poc -R; printf 'RTTY_%s\\n' 'UPLOAD_DONE'\n")
 	for {
 		kind, _ := read()
@@ -206,9 +244,13 @@ func run() {
 	check("real device HTTP proxy", r.StatusCode == 200 && string(b) == "RTTY_WEB_REAL_DEVICE", string(b))
 	grant := map[string]any{"user_id": f.Users["operator"].ID, "device_id": f.Device["id"], "access": false}
 	defer func() { grant["access"] = true; r := call(admin, "PUT", "/api/manage/grants", grant); r.Body.Close() }()
-	r = call(admin, "PUT", "/api/manage/grants", grant)
-	check("revoke operator grant", r.StatusCode == 200, r.StatusCode)
-	r.Body.Close()
+	if groupMode {
+		groupGrant(gb, false)
+	} else {
+		r = call(admin, "PUT", "/api/manage/grants", grant)
+		check("revoke operator grant", r.StatusCode == 200, r.StatusCode)
+		r.Body.Close()
+	}
 	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
 	closed := false
 	for i := 0; i < 20; i++ {
