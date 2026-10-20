@@ -84,3 +84,7 @@ API: POST /api/manage/groups {name}; PATCH /api/manage/groups/:name {name}; DELE
 Before upgrading stop the single server and back up its binary and identity.db together. Migration clears the legacy group column; rollback MUST restore both stopped-instance database and matching old binary. Never run an old binary against the migrated database. Existing clients and device credentials do not change.
 
 Replay: build cmd/tenant-e2e as /tmp/rttys-groups-check and the new server as /tmp/rttys-groups; run RTTY_BINARY=/tmp/rttys-groups RTTY_SOCKET_BINARY=/tmp/rttys-groups-check python3 scripts/run-local-e2e.py. Set RTTY_LEGACY_BINARY to the tenant.1 binary to verify real database migration. Set RTTY_GROUPS=1 when running cmd/tenant-live-check to test two group grants on the real device; it restores the original memberships/direct test grant and deletes temporary groups afterwards.
+
+## Console redesign
+
+The console now uses four task-focused areas: Devices (status/search/pagination, terminal/Web, per-row management menu), Groups (group list with device membership detail), Members and Permissions (select a member to inspect or edit grants), and Activity (searchable paginated recent records). Platform admins additionally see Tenants and Accounts. Enrollment, account creation and authorization use labeled drawers. Device group membership remains a visible checkbox dialog. Tenant API and backend authorization are unchanged.
