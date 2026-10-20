@@ -57,6 +57,10 @@ func (srv *RttyServer) ListenAPI() error {
 	}
 
 	authorized := r.Group("/api", func(c *gin.Context) {
+		if srv.tenant != nil {
+			srv.tenant.middleware(c)
+			return
+		}
 		if !cfg.LocalAuth && isLocalRequest(c) {
 			return
 		}
@@ -79,10 +83,13 @@ func (srv *RttyServer) ListenAPI() error {
 	authorized.POST("/cmd/:devid", a.handleCmd)
 	authorized.Any("/web/:devid/:proto/:addr/*path", a.handleWeb)
 	authorized.Any("/web2/:group/:devid/:proto/:addr/*path", a.handleWeb2)
-	authorized.GET("/signout", a.handleSignout)
-
-	r.POST("/api/signin", a.handleSignin)
-	r.GET("/api/alive", a.handleAlive)
+	if srv.tenant != nil {
+		srv.tenant.routes(r)
+	} else {
+		authorized.GET("/signout", a.handleSignout)
+		r.POST("/api/signin", a.handleSignin)
+		r.GET("/api/alive", a.handleAlive)
+	}
 
 	r.NoRoute(a.handleFile)
 
@@ -94,6 +101,9 @@ func (srv *RttyServer) ListenAPI() error {
 
 	log.Info().Msgf("Listen users on: %s", ln.Addr().(*net.TCPAddr))
 
+	if srv.tenant != nil {
+		return (&http.Server{Handler: r, ReadHeaderTimeout: 5 * time.Second}).ServeTLS(ln, cfg.SslCert, cfg.SslKey)
+	}
 	return r.RunListener(ln)
 }
 
@@ -194,6 +204,10 @@ func (a *APIServer) auth(c *gin.Context) bool {
 }
 
 func (a *APIServer) callUserHookUrl(c *gin.Context, dev string, group string) bool {
+	if a.srv.tenant != nil {
+		_, _, err := a.srv.tenant.access(tenantSession(c), dev, true)
+		return err == nil
+	}
 	cfg := &a.srv.cfg
 
 	if cfg.UserHookUrl == "" {
@@ -249,13 +263,13 @@ func (a *APIServer) callUserHookUrl(c *gin.Context, dev string, group string) bo
 }
 
 func (a *APIServer) handleConnect(c *gin.Context) {
-	if !a.callUserHookUrl(c, c.Param("devid"), c.Query("group")) {
+	if !a.callUserHookUrl(c, c.Param("devid"), requestGroup(c)) {
 		c.Status(http.StatusForbidden)
 		return
 	}
 
 	if c.GetHeader("Upgrade") != "websocket" {
-		group := c.Query("group")
+		group := requestGroup(c)
 		devid := c.Param("devid")
 		if dev := a.srv.GetDevice(group, devid); dev == nil {
 			c.Redirect(http.StatusFound, "/error/offline")
@@ -275,6 +289,10 @@ func (a *APIServer) handleConnect(c *gin.Context) {
 }
 
 func (a *APIServer) handleCounts(c *gin.Context) {
+	if a.srv.tenant != nil {
+		a.srv.tenant.list(c, "counts")
+		return
+	}
 	count := 0
 
 	a.srv.groups.Range(func(key, value any) bool {
@@ -286,6 +304,10 @@ func (a *APIServer) handleCounts(c *gin.Context) {
 }
 
 func (a *APIServer) handleGroups(c *gin.Context) {
+	if a.srv.tenant != nil {
+		a.srv.tenant.list(c, "groups")
+		return
+	}
 	groups := []string{""}
 
 	a.srv.groups.Range(func(key, value any) bool {
@@ -299,8 +321,12 @@ func (a *APIServer) handleGroups(c *gin.Context) {
 }
 
 func (a *APIServer) handleDevs(c *gin.Context) {
+	if a.srv.tenant != nil {
+		a.srv.tenant.list(c, "devs")
+		return
+	}
 	devs := make([]*DeviceInfo, 0)
-	g := a.srv.GetGroup(c.Query("group"), false)
+	g := a.srv.GetGroup(requestGroup(c), false)
 
 	if g == nil {
 		c.JSON(http.StatusOK, devs)
@@ -327,7 +353,16 @@ func (a *APIServer) handleDevs(c *gin.Context) {
 }
 
 func (a *APIServer) handleDev(c *gin.Context) {
-	if dev := a.srv.GetDevice(c.Query("group"), c.Param("devid")); dev != nil {
+	if a.srv.tenant != nil {
+		_, d, err := a.srv.tenant.access(tenantSession(c), c.Param("devid"), false)
+		if err != nil {
+			c.Status(404)
+			return
+		}
+		c.JSON(200, d)
+		return
+	}
+	if dev := a.srv.GetDevice(requestGroup(c), c.Param("devid")); dev != nil {
 		info := &DeviceInfo{
 			ID:        dev.id,
 			Desc:      dev.desc,
@@ -343,12 +378,12 @@ func (a *APIServer) handleDev(c *gin.Context) {
 }
 
 func (a *APIServer) handleSerialPorts(c *gin.Context) {
-	if !a.callUserHookUrl(c, c.Param("devid"), c.Query("group")) {
+	if !a.callUserHookUrl(c, c.Param("devid"), requestGroup(c)) {
 		c.Status(http.StatusForbidden)
 		return
 	}
 
-	dev := a.srv.GetDevice(c.Query("group"), c.Param("devid"))
+	dev := a.srv.GetDevice(requestGroup(c), c.Param("devid"))
 	if dev == nil {
 		c.Status(http.StatusNotFound)
 		return
@@ -372,7 +407,7 @@ func (a *APIServer) handleSerialPorts(c *gin.Context) {
 }
 
 func (a *APIServer) handleCmd(c *gin.Context) {
-	if !a.callUserHookUrl(c, c.Param("devid"), c.Query("group")) {
+	if !a.callUserHookUrl(c, c.Param("devid"), requestGroup(c)) {
 		c.Status(http.StatusForbidden)
 		return
 	}
@@ -385,7 +420,7 @@ func (a *APIServer) handleCmd(c *gin.Context) {
 		return
 	}
 
-	dev := a.srv.GetDevice(c.Query("group"), c.Param("devid"))
+	dev := a.srv.GetDevice(requestGroup(c), c.Param("devid"))
 	if dev == nil {
 		cmdErrResp(c, rttyCmdErrOffline)
 		return

@@ -15,3 +15,10 @@
 
 assets/dist
 internal/server/assets/dist
+*.db
+*.db-*
+*.pem
+*.fixture.json
+credentials*
+access.txt
+evidence/

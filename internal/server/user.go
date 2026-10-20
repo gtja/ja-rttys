@@ -25,6 +25,7 @@ import (
 )
 
 type User struct {
+	policy  *accessLease
 	conn    *websocket.Conn
 	sid     string
 	dev     *Device
@@ -60,6 +61,9 @@ func (user *User) OnOpen(code byte) {
 }
 
 func (user *User) OnData(data []byte) {
+	if user.policy != nil && !user.policy.valid() {
+		return
+	}
 	msg := make([]byte, len(data)+1)
 	copy(msg[1:], data)
 	if err := user.WriteMsg(websocket.BinaryMessage, msg); err != nil {
@@ -68,6 +72,9 @@ func (user *User) OnData(data []byte) {
 }
 
 func (user *User) OnFile(data []byte) {
+	if user.policy != nil && !user.policy.valid() {
+		return
+	}
 	if len(data) == 0 {
 		return
 	}
@@ -125,7 +132,7 @@ func handleUserConnection(srv *RttyServer, c *gin.Context) {
 
 	user := &User{conn: conn, serial: c.Query("mode") == "serial"}
 
-	dev := srv.GetDevice(c.Query("group"), devid)
+	dev := srv.GetDevice(requestGroup(c), devid)
 	if dev == nil {
 		user.SendCloseMsg(LoginErrorOffline, "device not found")
 		conn.Close()
@@ -147,8 +154,21 @@ func handleUserConnection(srv *RttyServer, c *gin.Context) {
 	user.sid = sid
 	user.dev = dev
 	user.pending = make(chan byte, 1)
+	if srv.tenant != nil {
+		lease, err := srv.tenant.attach(tenantSession(c), devid, user.Close)
+		if err != nil {
+			conn.Close()
+			return
+		}
+		user.policy = lease
+		defer srv.tenant.detach(lease)
+	}
 
 	dev.pending.Store(sid, user)
+	if user.closed.Load() {
+		dev.pending.Delete(sid)
+		return
+	}
 
 	defer user.Close()
 
@@ -237,6 +257,7 @@ func (user *User) Close() {
 		sid := user.sid
 
 		user.closed.Store(true)
+		user.conn.Close()
 
 		if _, loaded := dev.users.LoadAndDelete(sid); loaded {
 			dev.WriteMsg(proto.MsgTypeLogout, sid)
@@ -285,6 +306,9 @@ func (user *User) handleMsg() {
 
 	for {
 		msgType, data, err := user.conn.ReadMessage()
+		if user.policy != nil && !user.policy.valid() {
+			return
+		}
 		if err != nil {
 			if !user.closed.Load() {
 				closeError, ok := err.(*websocket.CloseError)

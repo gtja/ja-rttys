@@ -1,0 +1,69 @@
+plane_work_item: local-rttys-tenant
+slice: rttys standalone tenant authentication and isolated test deployment
+lane: high-risk
+base_branch: master
+claim:
+  kind: integration_health
+  statement: Authenticated tenant-scoped device access with revocable terminal/file/proxy sessions
+  intent_ref: user-request-this-chat
+  does_not_prove: [production readiness, high availability, command rollback]
+business:
+  actor: tenant administrators and device operators
+  workflow: enroll devices, grant access, operate terminal/files/web, revoke access
+  problem: upstream shared password and optional token do not provide tenant isolation
+  baseline: upstream bc1ac604 has no tenant store and list endpoints lack resource authorization
+  target: reject unauthorized device enrollment and cross-tenant operations; revoke open channels
+  outcome: independently usable authenticated remote maintenance platform
+  evidence_sources: [DELIVERY.md, scripts/tenant-e2e.py, cmd/tenant-e2e/main.go]
+  outcome_measurement:
+    status: planned
+    metrics:
+      - name: authorized_and_denied_behavior
+        direction: threshold
+        baseline: no tenant isolation
+        target: all required negative and positive paths pass
+        source: evidence delivery receipt
+    observation_window: local and isolated 204 test run
+    reason: ""
+harness:
+  bootstrap: {status: available, probe: go build ./cmd/rttys}
+  reset: {status: available, probe: scripts/run-local-e2e.py creates disposable SQLite fixture}
+  focused_test: {status: available, probe: python3 scripts/run-local-e2e.py}
+  ground_truth:
+    status: available
+    probe: compare transport observations with user-defined policy in DELIVERY.md
+    oracle_kind: human_gold
+    uri: DELIVERY.md
+    digest: ""
+    independent_from_sut_input: true
+  fixtures: {status: available, probe: synthetic tenants and devices plus NVIDIA 172.21.0.156}
+  architecture_check: {status: not_applicable, reason: manual security boundary review and full transport checks cover this single-process fork}
+  secret_policy: redact
+allowed_paths: [cmd/**, internal/**, ui/**, scripts/**, go.mod, go.sum, contract.yaml, DELIVERY.md, .gitignore, README-TENANT.md, THIRD_PARTY.md]
+non_goals: [production cutover, SSO, clustering, shell command sandbox, serial and sharing]
+invariants:
+  - tenant identity is derived from authenticated membership and enrolled credentials
+  - existing edge-manager edits and other remote services are untouched
+  - no secrets are committed
+acceptance:
+  - id: AC-1
+    given: separate tenants and device credentials
+    when: HTTP and device protocol requests cross the intended scope
+    then: lists remain scoped and unauthorized registration and access are rejected
+  - id: AC-2
+    given: live authorized terminal file and web channels
+    when: membership or device access is revoked
+    then: new access is rejected and existing channels cease accepting data
+  - id: AC-3
+    given: independent test deployment on 204 and NVIDIA client 156
+    when: authenticated operator connects
+    then: real terminal and file operations work with replay evidence and rollback instructions
+proof:
+  evidence_tier: deployment-real
+  acceptance_owner: user
+  artifact_root: external daily memo rttys-tenant
+  commands: [python3 scripts/run-local-e2e.py, deployed real-device acceptance]
+rollback: stop only rttys-tenant-poc services; retain previous binaries and database backups
+open_questions: []
+execution:
+  environments: {local: read-write, test: read-write, production: forbidden}

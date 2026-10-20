@@ -56,6 +56,10 @@ func (ses *HttpProxySession) String() string {
 }
 
 func (srv *RttyServer) ListenHttpProxy() {
+	if srv.tenant != nil {
+		srv.listenSecureProxy()
+		return
+	}
 	cfg := &srv.cfg
 
 	if cfg.AddrHttpProxy != "" {
@@ -251,6 +255,10 @@ func httpReadRequest(conn net.Conn, br *bufio.Reader, head *bytebufferpool.ByteB
 }
 
 func httpProxyRedirect(a *APIServer, c *gin.Context, group string) {
+	if a.srv.tenant != nil {
+		a.secureProxyRedirect(c)
+		return
+	}
 	srv := a.srv
 	cfg := &srv.cfg
 

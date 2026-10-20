@@ -6,6 +6,7 @@
 package server
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"sync"
@@ -20,17 +21,20 @@ type RttyServer struct {
 	cfg           Config
 	httpProxyPort int
 	shares        *shareManager
+	tenant        *TenantAuth
 }
 
 type Config struct {
-	AddrDev         string
-	AddrUser        string
-	AddrHttpProxy   string
-	ShareBindHost   string
-	SharePublicHost string
-	SharePortStart  int
-	SharePortEnd    int
-	ShareHostKey    string
+	TenantDB              string
+	BootstrapPasswordFile string
+	AddrDev               string
+	AddrUser              string
+	AddrHttpProxy         string
+	ShareBindHost         string
+	SharePublicHost       string
+	SharePortStart        int
+	SharePortEnd          int
+	ShareHostKey          string
 
 	HttpProxyRedirURL    string
 	HttpProxyRedirDomain string
@@ -67,7 +71,16 @@ type DeviceGroup struct {
 }
 
 func (srv *RttyServer) Run() error {
-	log.Debug().Msgf("%+v", srv.cfg)
+	if srv.cfg.TenantDB != "" {
+		if srv.cfg.SslCert == "" || srv.cfg.SslKey == "" {
+			return fmt.Errorf("tenant mode requires TLS certificate and key")
+		}
+		var err error
+		srv.tenant, err = openTenantAuth(srv)
+		if err != nil {
+			return err
+		}
+	}
 
 	if srv.cfg.PprofAddr != "" {
 		go srv.ListenPprof()

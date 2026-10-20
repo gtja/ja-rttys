@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	_ "net/http/pprof"
 	"os"
 	"runtime"
@@ -19,7 +20,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const RttysVersion = "5.6.0"
+const RttysVersion = "5.6.0-tenant.1"
 
 var (
 	GitCommit = ""
@@ -32,6 +33,8 @@ func main() {
 		Usage:   "The server side for rtty",
 		Version: RttysVersion,
 		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "tenant-db", Value: "rttys.db", Usage: "SQLite identity store (required)"},
+			&cli.StringFlag{Name: "bootstrap-password-file", Usage: "initial admin password file; used only for an empty database"},
 			&cli.StringFlag{
 				Name:  "log-level",
 				Value: "info",
@@ -172,6 +175,11 @@ func cmdAction(c context.Context, cmd *cli.Command) error {
 		return err
 	}
 
+	cfg.TenantDB = cmd.String("tenant-db")
+	cfg.BootstrapPasswordFile = cmd.String("bootstrap-password-file")
+	if cfg.TenantDB == "" {
+		return fmt.Errorf("tenant-db cannot be empty")
+	}
 	srv := server.New(cfg)
 
 	return srv.Run()

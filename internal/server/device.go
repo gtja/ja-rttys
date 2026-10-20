@@ -38,6 +38,7 @@ type DeviceInfo struct {
 }
 
 type Device struct {
+	wireID    string
 	group     string
 	id        string
 	proto     uint8
@@ -232,6 +233,10 @@ func (dev *Device) ReadMsg() (byte, []byte, error) {
 func (dev *Device) WriteMsg(typ byte, data ...any) error {
 	dev.writeMu.Lock()
 	defer dev.writeMu.Unlock()
+	if dev.conn != nil {
+		dev.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		defer dev.conn.SetWriteDeadline(time.Time{})
+	}
 
 	return dev.msg.Write(typ, data...)
 }
@@ -246,6 +251,9 @@ func (dev *Device) Close(srv *RttyServer) {
 }
 
 func (dev *Device) ParseRegister(b []byte) error {
+	if len(b) == 0 {
+		return fmt.Errorf("empty registration")
+	}
 	dev.proto = b[0]
 
 	if dev.proto > 4 {
@@ -309,6 +317,9 @@ func (dev *Device) Register(srv *RttyServer) byte {
 		return devRegErrHookFailed
 	}
 
+	if srv.tenant != nil {
+		return srv.tenant.register(dev)
+	}
 	if cfg.Token != "" && dev.token != cfg.Token {
 		log.Error().Msgf("invalid token for device '%s'", dev.id)
 		return devRegErrInvalidToken

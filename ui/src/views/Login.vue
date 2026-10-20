@@ -4,6 +4,7 @@
       {{ $t('Authorization Required') }}
     </template>
     <el-form :model="formValue" size="large" @submit.prevent="handleSubmit">
+      <el-form-item prop="username"><el-input v-model="formValue.username" placeholder="用户名" autocomplete="username" /></el-form-item>
       <el-form-item prop="password">
         <el-input autofocus type="password" v-model="formValue.password" prefix-icon="lock" :placeholder="$t('Enter password...')" show-password/>
       </el-form-item>
@@ -26,11 +27,13 @@ const router = useRouter()
 
 const loading = ref(false)
 const formValue = reactive({
+  username: '',
   password: ''
 })
 
 const handleSubmit = () => {
   const params = {
+    username: formValue.username,
     password: formValue.password
   }
 
