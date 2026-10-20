@@ -96,6 +96,15 @@ func run() {
 	var devices []map[string]any
 	json.NewDecoder(r.Body).Decode(&devices)
 	r.Body.Close()
+	// Service restart and client reconnect are asynchronous; require bounded readiness.
+	deadline := time.Now().Add(60 * time.Second)
+	for (len(devices) != 1 || devices[0]["online"] != true) && time.Now().Before(deadline) {
+		time.Sleep(time.Second)
+		r = call(op, "GET", "/api/devs", nil)
+		devices = nil
+		json.NewDecoder(r.Body).Decode(&devices)
+		r.Body.Close()
+	}
 	check("real device online", len(devices) == 1 && devices[0]["online"] == true, devices)
 	headers := http.Header{}
 	rq, _ := http.NewRequest("GET", f.URL, nil)
