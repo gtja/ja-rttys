@@ -1,4 +1,18 @@
-# rttys
+# ja-rttys
+
+基于 [zhaojh329/rttys](https://github.com/zhaojh329/rttys) 的独立多租户远程运维服务。
+
+- 内置账号、租户与角色管理
+- 设备预登记、独立接入凭据及凭据轮换
+- 多分组管理，按设备与分组授权的并集控制访问
+- 终端、文件和 Web 代理的访问控制与会话撤权
+- 重构后的设备、分组、成员权限和操作记录控制台
+
+部署、构建与验证说明见 [README-TENANT.md](README-TENANT.md)。当前为测试版本，安全扫描发现的问题仍需逐项修复与复验，不能视为生产安全认证。
+
+保留上游 MIT 许可及原始项目说明。
+
+## 上游项目
 
 [1]: https://img.shields.io/badge/license-MIT-brightgreen.svg?style=plastic
 [2]: /LICENSE
