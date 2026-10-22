@@ -10,7 +10,7 @@
 
 部署、构建与验证说明见 [README-TENANT.md](README-TENANT.md)。当前为测试版本，安全扫描发现的问题仍需逐项修复与复验，不能视为生产安全认证。
 
-保留上游 MIT 许可及原始项目说明。
+保留上游 MIT 许可及原始项目说明。上游 CI 配置保存在 [docs/upstream-workflows](docs/upstream-workflows)，目前未启用 GitHub Actions 自动构建与发布。
 
 ## 上游项目
 
