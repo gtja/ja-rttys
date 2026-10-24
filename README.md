@@ -8,7 +8,7 @@
 - 终端、文件和 Web 代理的访问控制与会话撤权
 - 重构后的设备、分组、成员权限和操作记录控制台
 
-部署、构建与验证说明见 [README-TENANT.md](README-TENANT.md)。当前为测试版本，安全扫描发现的问题仍需逐项修复与复验，不能视为生产安全认证。
+部署、构建与验证说明及扫描整改记录见 [README-TENANT.md](README-TENANT.md)。当前为测试版本，扫描对应问题已完成本地修复与回归，实际部署仍需升级后复扫。
 
 保留上游 MIT 许可及原始项目说明。上游 CI 配置保存在 [docs/upstream-workflows](docs/upstream-workflows)，目前未启用 GitHub Actions 自动构建与发布。
 

@@ -46,6 +46,9 @@ func (srv *RttyServer) ListenAPI() error {
 	}
 
 	r.Use(func(c *gin.Context) {
+		if srv.tenant != nil {
+			c.Header("Cross-Origin-Opener-Policy", "same-origin")
+		}
 		c.Next()
 		log.Debug().Msgf("%s - \"%s %s %s %d\"", c.ClientIP(),
 			c.Request.Method, c.Request.URL.Path, c.Request.Proto, c.Writer.Status())

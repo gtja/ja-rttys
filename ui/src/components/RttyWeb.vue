@@ -126,9 +126,9 @@ const open = () => {
       const devid = dev.id
 
       if (group)
-        window.open(`/api/web2/${group}/${devid}/${proto}/${addr}`)
+        window.open(`/api/web2/${group}/${devid}/${proto}/${addr}`, '_blank', 'noopener,noreferrer')
       else
-        window.open(`/api/web/${devid}/${proto}/${addr}`)
+        window.open(`/api/web/${devid}/${proto}/${addr}`, '_blank', 'noopener,noreferrer')
     }, 100)
   })
 }

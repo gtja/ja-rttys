@@ -8,8 +8,8 @@ package main
 import (
 	"context"
 	"fmt"
-	_ "net/http/pprof"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	xlog "github.com/zhaojh329/rttys/v5/internal/log"
@@ -33,7 +33,7 @@ func main() {
 		Usage:   "The server side for rtty",
 		Version: RttysVersion,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "tenant-db", Value: "rttys.db", Usage: "SQLite identity store (required)"},
+			&cli.StringFlag{Name: "tenant-db", Usage: "absolute path to SQLite identity store (required)"},
 			&cli.StringFlag{Name: "bootstrap-password-file", Usage: "initial admin password file; used only for an empty database"},
 			&cli.StringFlag{
 				Name:  "log-level",
@@ -100,8 +100,9 @@ func main() {
 			},
 			&cli.StringFlag{
 				Name:  "pprof",
-				Usage: "enable pprof and listen on specified address (e.g. localhost:6060)",
+				Usage: "enable local-only pprof (e.g. 127.0.0.1:6060); use an SSH tunnel for remote access",
 			},
+			&cli.StringFlag{Name: "pprof-token-file", Usage: "private file containing the pprof Bearer token (32-256 bytes); required with pprof"},
 			&cli.BoolFlag{
 				Name:    "verbose",
 				Aliases: []string{"V"},
@@ -130,8 +131,6 @@ func main() {
 }
 
 func cmdAction(c context.Context, cmd *cli.Command) error {
-	defer xlog.RecoverPanic()
-
 	switch cmd.String("log-level") {
 	case "debug":
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
@@ -175,10 +174,8 @@ func cmdAction(c context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	cfg.TenantDB = cmd.String("tenant-db")
-	cfg.BootstrapPasswordFile = cmd.String("bootstrap-password-file")
-	if cfg.TenantDB == "" {
-		return fmt.Errorf("tenant-db cannot be empty")
+	if cfg.TenantDB == "" || !filepath.IsAbs(cfg.TenantDB) {
+		return fmt.Errorf("tenant-db must be an explicit absolute path")
 	}
 	srv := server.New(cfg)
 

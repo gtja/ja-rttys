@@ -7,12 +7,16 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/zhaojh329/rtty-go/proto"
 	xlog "github.com/zhaojh329/rttys/v5/internal/log"
@@ -80,8 +84,11 @@ func (user *User) OnFile(data []byte) {
 	}
 	switch data[0] {
 	case proto.MsgTypeFileSend:
-		user.WriteMsg(websocket.TextMessage,
-			fmt.Appendf(nil, `{"type":"sendfile", "name": "%s"}`, string(data[1:])))
+		msg, _ := json.Marshal(struct {
+			Type string `json:"type"`
+			Name string `json:"name"`
+		}{Type: "sendfile", Name: downloadFilename(string(data[1:]))})
+		user.WriteMsg(websocket.TextMessage, msg)
 	case proto.MsgTypeFileRecv:
 		user.WriteMsg(websocket.TextMessage, []byte(`{"type":"recvfile"}`))
 	case proto.MsgTypeFileData:
@@ -91,6 +98,25 @@ func (user *User) OnFile(data []byte) {
 	case proto.MsgTypeFileAbort:
 		user.WriteMsg(websocket.BinaryMessage, []byte{1})
 	}
+}
+
+func downloadFilename(name string) string {
+	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, name)
+	// Keep UTF-8 intact while bounding the filename passed to browsers.
+	name = strings.ToValidUTF8(name, "")
+	if len(name) > 255 {
+		name = strings.ToValidUTF8(name[:255], "")
+	}
+	if name == "" || name == "." || name == ".." || name == "/" {
+		return "download"
+	}
+	return name
 }
 
 type UserMsg struct {

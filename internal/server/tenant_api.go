@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +16,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func tenantSession(c *gin.Context) string { v, _ := c.Cookie("rt_sid"); return digest(v) }
+const tenantSessionCookie = "__Host-rt_sid"
+
+func tenantSession(c *gin.Context) string { v, _ := c.Cookie(tenantSessionCookie); return digest(v) }
 func tenantOrigin(c *gin.Context) bool {
 	origin := c.GetHeader("Origin")
 	if origin == "" {
@@ -62,55 +65,39 @@ func (a *TenantAuth) signin(c *gin.Context) {
 	}
 	a.mu.Lock()
 	ip := c.RemoteIP()
-	accountKey := ip + "\x00" + in.Username
+	ipKey := "ip:" + digest(ip)
+	accountKey := "account:" + digest(ip+"\x00"+in.Username)
 	now := time.Now()
-	if len(a.attempts) > 10000 {
-		for key, x := range a.attempts {
-			if x.Until.Before(now) {
-				delete(a.attempts, key)
-			}
-		}
-	}
-	if len(a.attempts) > 20000 {
+	if retry := a.limitLoginLocked(ipKey, accountKey, now); retry > 0 {
 		a.mu.Unlock()
+		c.Header("Retry-After", strconv.Itoa(int(retry/time.Second)+1))
 		c.Status(429)
 		return
-	}
-	for key, limit := range map[string]int{"ip:" + ip: 100, accountKey: 10} {
-		v := a.attempts[key]
-		if v.Until.Before(now) {
-			window := time.Minute
-			if key == accountKey {
-				window = 5 * time.Minute
-			}
-			v = loginAttempt{Until: now.Add(window)}
-		}
-		if v.Count >= limit {
-			a.mu.Unlock()
-			c.Status(429)
-			return
-		}
-		v.Count++
-		a.attempts[key] = v
 	}
 	var id string
 	var hash []byte
 	var admin bool
 	err := a.db.QueryRow("SELECT id,password,admin FROM users WHERE username=? AND disabled=0", in.Username).Scan(&id, &hash, &admin)
 	a.mu.Unlock()
-	if err != nil {
-		c.Status(401)
-		return
-	}
+	queryErr := err
 	select {
 	case a.passwordSlots <- struct{}{}:
 	default:
+		c.Header("Retry-After", "1")
 		c.Status(429)
 		return
 	}
-	err = bcrypt.CompareHashAndPassword(hash, []byte(in.Password))
+	comparisonHash := hash
+	if queryErr != nil {
+		comparisonHash = dummyLoginHash
+	}
+	err = bcrypt.CompareHashAndPassword(comparisonHash, []byte(in.Password))
 	<-a.passwordSlots
-	if err != nil {
+	if queryErr != nil && queryErr != sql.ErrNoRows {
+		c.Status(503)
+		return
+	}
+	if err != nil || queryErr != nil {
 		c.Status(401)
 		return
 	}
@@ -136,7 +123,7 @@ func (a *TenantAuth) signin(c *gin.Context) {
 		return
 	}
 	delete(a.attempts, accountKey)
-	http.SetCookie(c.Writer, &http.Cookie{Name: "rt_sid", Value: token, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 8 * 3600})
+	http.SetCookie(c.Writer, &http.Cookie{Name: tenantSessionCookie, Value: token, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 8 * 3600})
 	c.JSON(200, gin.H{"username": in.Username, "tenant_id": tenant})
 }
 func (a *TenantAuth) middleware(c *gin.Context) {
@@ -213,7 +200,7 @@ func (a *TenantAuth) routes(r *gin.Engine) {
 				go l.close()
 			}
 		}
-		http.SetCookie(c.Writer, &http.Cookie{Name: "rt_sid", Path: "/", Secure: true, HttpOnly: true, MaxAge: -1})
+		http.SetCookie(c.Writer, &http.Cookie{Name: tenantSessionCookie, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 		c.Status(200)
 	})
 	api.POST("/tenant", a.switchTenant)
