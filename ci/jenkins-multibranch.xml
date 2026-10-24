@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject>
+  <actions/>
+  <description>ja-rttys 独立 CI：验证及双架构出包。镜像推送和已有 204 实例升级默认关闭。</description>
+  <properties/>
+  <healthMetrics/>
+  <orphanedItemStrategy class="com.cloudbees.hudson.plugins.folder.computed.DefaultOrphanedItemStrategy">
+    <pruneDeadBranches>false</pruneDeadBranches>
+    <daysToKeep>-1</daysToKeep>
+    <numToKeep>-1</numToKeep>
+  </orphanedItemStrategy>
+  <triggers>
+    <com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger>
+      <spec>* * * * *</spec>
+      <interval>300000</interval>
+    </com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger>
+  </triggers>
+  <sources class="jenkins.branch.MultiBranchProject$BranchSourceList">
+    <data>
+      <jenkins.branch.BranchSource>
+        <source class="org.jenkinsci.plugins.github_branch_source.GitHubSCMSource">
+          <id>ja-rttys-github</id>
+          <apiUri>https://api.github.com</apiUri>
+          <credentialsId>github-pat</credentialsId>
+          <repoOwner>gtja</repoOwner>
+          <repository>ja-rttys</repository>
+          <repositoryUrl>https://github.com/gtja/ja-rttys.git</repositoryUrl>
+          <traits>
+            <org.jenkinsci.plugins.github__branch__source.BranchDiscoveryTrait>
+              <strategyId>3</strategyId>
+            </org.jenkinsci.plugins.github__branch__source.BranchDiscoveryTrait>
+            <jenkins.scm.impl.trait.WildcardSCMHeadFilterTrait>
+              <includes>master dev test release codex/security-scan-20261024</includes>
+              <excludes/>
+            </jenkins.scm.impl.trait.WildcardSCMHeadFilterTrait>
+          </traits>
+        </source>
+        <strategy class="jenkins.branch.DefaultBranchPropertyStrategy">
+          <properties class="empty-list"/>
+        </strategy>
+      </jenkins.branch.BranchSource>
+    </data>
+    <owner class="org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject" reference="../.."/>
+  </sources>
+  <factory class="org.jenkinsci.plugins.workflow.multibranch.WorkflowBranchProjectFactory">
+    <owner class="org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject" reference="../.."/>
+    <scriptPath>Jenkinsfile</scriptPath>
+  </factory>
+</org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject>

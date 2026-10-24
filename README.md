@@ -10,7 +10,9 @@
 
 部署、构建与验证说明及扫描整改记录见 [README-TENANT.md](README-TENANT.md)。当前为测试版本，扫描对应问题已完成本地修复与回归，实际部署仍需升级后复扫。
 
-保留上游 MIT 许可及原始项目说明。上游 CI 配置保存在 [docs/upstream-workflows](docs/upstream-workflows)，目前未启用 GitHub Actions 自动构建与发布。
+初步 CI/CD 使用 Jenkins，提供安全检查、端到端回归、Linux 双架构出包，以及显式启用的镜像推送和测试实例升级，见 [CI/CD 接入说明](ci/README.md)。
+
+保留上游 MIT 许可及原始项目说明。上游 CI 配置保存在 [docs/upstream-workflows](docs/upstream-workflows)，未启用 GitHub Actions 自动构建与发布。
 
 ## 上游项目
 
