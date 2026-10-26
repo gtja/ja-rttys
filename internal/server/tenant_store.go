@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
@@ -81,6 +84,9 @@ var errDenied = errors.New("access denied")
 
 func openTenantAuth(srv *RttyServer) (*TenantAuth, error) {
 	cfg := srv.cfg
+	if cfg.TenantDB == "" || !filepath.IsAbs(cfg.TenantDB) {
+		return nil, errors.New("tenant-db must be an explicit absolute path")
+	}
 	if err := os.MkdirAll(filepath.Dir(cfg.TenantDB), 0700); err != nil {
 		return nil, err
 	}
@@ -92,13 +98,12 @@ func openTenantAuth(srv *RttyServer) (*TenantAuth, error) {
 	if err = os.Chmod(cfg.TenantDB, 0600); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", cfg.TenantDB)
+	db, err := sql.Open("sqlite", tenantDBDSN(cfg.TenantDB))
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	schema := `PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=DELETE; PRAGMA locking_mode=EXCLUSIVE;
- CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password BLOB NOT NULL, admin INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0);
+	schema := `CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password BLOB NOT NULL, admin INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS tenants(id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL, disabled INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS members(tenant TEXT REFERENCES tenants(id), user TEXT REFERENCES users(id), role TEXT NOT NULL CHECK(role IN ('admin','operator','viewer')), PRIMARY KEY(tenant,user));
  CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY, tenant TEXT NOT NULL REFERENCES tenants(id), wire_id TEXT NOT NULL, grp TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, disabled INTEGER NOT NULL DEFAULT 0, web_targets TEXT NOT NULL DEFAULT '[]', UNIQUE(tenant,wire_id));
@@ -122,7 +127,7 @@ func openTenantAuth(srv *RttyServer) (*TenantAuth, error) {
 		return nil, err
 	}
 	if count == 0 {
-		secret, readErr := os.ReadFile(cfg.BootstrapPasswordFile)
+		secret, readErr := readPrivateSecretFile(cfg.BootstrapPasswordFile)
 		if readErr != nil {
 			db.Close()
 			return nil, fmt.Errorf("empty account database requires bootstrap password file: %w", readErr)
@@ -141,6 +146,7 @@ func openTenantAuth(srv *RttyServer) (*TenantAuth, error) {
 			db.Close()
 			return nil, err
 		}
+		log.Info().Msg("Initial administrator created; change its password and remove the bootstrap password file")
 	}
 	go func() {
 		ticker := time.NewTicker(time.Second)
@@ -159,6 +165,54 @@ func openTenantAuth(srv *RttyServer) (*TenantAuth, error) {
 		}
 	}()
 	return a, nil
+}
+
+func tenantDBDSN(path string) string {
+	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
+	q := u.Query()
+	// The driver applies these to every new database connection, including
+	// replacements after database/sql retires a connection.
+	for _, pragma := range []string{"foreign_keys(ON)", "busy_timeout(5000)", "journal_mode(DELETE)", "locking_mode(EXCLUSIVE)"} {
+		q.Add("_pragma", pragma)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func readPrivateSecretFile(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+		return nil, errors.New("secret must be a regular file with permissions 0600 or stricter")
+	}
+	if err := checkPrivateSecretOwner(info); err != nil {
+		return nil, err
+	}
+	f, err := openPrivateSecretFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(info, opened) || !opened.Mode().IsRegular() || opened.Mode().Perm()&0077 != 0 {
+		return nil, errors.New("secret file changed during open")
+	}
+	if err := checkPrivateSecretOwner(opened); err != nil {
+		return nil, err
+	}
+	secret, err := io.ReadAll(io.LimitReader(f, 4097))
+	if err != nil {
+		return nil, err
+	}
+	if len(secret) > 4096 {
+		return nil, errors.New("secret file too large")
+	}
+	return secret, nil
 }
 
 func (a *TenantAuth) actorLocked(sid string) (*Actor, error) {

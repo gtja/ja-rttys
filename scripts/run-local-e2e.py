@@ -68,4 +68,7 @@ finally:
  server.terminate();server.wait(timeout=10)
  result['finished_at']=datetime.datetime.now(datetime.timezone.utc).isoformat()
  (root/'run.json').write_text(json.dumps(result,indent=2));print(json.dumps(result,indent=2))
+ if os.environ.get('RTTY_RUN_SUMMARY'):
+  summary=pathlib.Path(os.environ['RTTY_RUN_SUMMARY']);summary.parent.mkdir(parents=True,exist_ok=True)
+  summary.write_text(json.dumps(result,indent=2))
 sys.exit(r.returncode)

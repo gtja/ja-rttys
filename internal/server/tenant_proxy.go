@@ -182,7 +182,7 @@ func (srv *RttyServer) listenSecureProxy() {
 			cookies := req.Cookies()
 			req.Header.Del("Cookie")
 			for _, cookie := range cookies {
-				if cookie.Name != "rt_proxy" && cookie.Name != "rt_sid" {
+				if cookie.Name != "rt_proxy" && cookie.Name != "rt_sid" && cookie.Name != tenantSessionCookie {
 					req.AddCookie(cookie)
 				}
 			}
@@ -195,7 +195,7 @@ func (srv *RttyServer) listenSecureProxy() {
 			cookies := resp.Cookies()
 			resp.Header.Del("Set-Cookie")
 			for _, cookie := range cookies {
-				if cookie.Name != "rt_proxy" && cookie.Name != "rt_sid" {
+				if cookie.Name != "rt_proxy" && cookie.Name != "rt_sid" && cookie.Name != tenantSessionCookie {
 					cookie.Domain = ""
 					cookie.Secure = true
 					resp.Header.Add("Set-Cookie", cookie.String())

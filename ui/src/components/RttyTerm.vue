@@ -190,7 +190,7 @@ const onContextmenuClick = (name) => {
   } else if (name === 'close') {
     emit('close', props.panelId)
   } else if (name === 'about') {
-    window.open('https://github.com/zhaojh329/rtty')
+    window.open('https://github.com/zhaojh329/rtty', '_blank', 'noopener,noreferrer')
   }
 
   term.focus()
@@ -539,16 +539,27 @@ const connect = () => {
     const data = ev.data
 
     if (typeof data === 'string') {
-      const msg = JSON.parse(data)
+      let msg
+      try {
+        msg = JSON.parse(data)
+      } catch {
+        return
+      }
+      if (!msg || typeof msg !== 'object' || Array.isArray(msg) ||
+          !['login', 'sendfile', 'recvfile', 'fileAck', 'fileError'].includes(msg.type))
+        return
       if (msg.type === 'login') {
+        if (term) return
         loading?.close()
         openTerm()
       } else if (isSerial.value) {
         return
       } else if (msg.type === 'sendfile') {
+        if (typeof msg.name !== 'string') return
         resetFileTransfer()
         fileCtx.downloading = true
-        fileCtx.name = msg.name
+        fileCtx.name = msg.name.replace(/\\/g, '/').split('/').pop()
+          .replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 255) || 'download'
         fileCtx.transferID = msg.transfer_id || ''
         if (fileCtx.transferID) socket.send(JSON.stringify({type:'fileStart',transfer_id:fileCtx.transferID,window:Math.min(16,msg.max_window || 1)}))
         else socket.send(JSON.stringify({type: 'fileAck'}))

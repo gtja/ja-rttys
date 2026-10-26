@@ -6,7 +6,6 @@
 package log
 
 import (
-	"os"
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
@@ -38,6 +37,5 @@ func RecoverPanic() {
 	if r := recover(); r != nil {
 		log.Error().Msgf("%v", r)
 		log.Error().Msg(string(debug.Stack()))
-		os.Exit(2)
 	}
 }

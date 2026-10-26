@@ -27,14 +27,16 @@ func parseConfig(c *cli.Command, cfg *server.Config) error {
 	}
 
 	fields := map[string]any{
-		"addr-dev":          &cfg.AddrDev,
-		"addr-user":         &cfg.AddrUser,
-		"addr-http-proxy":   &cfg.AddrHttpProxy,
-		"share-bind-host":   &cfg.ShareBindHost,
-		"share-public-host": &cfg.SharePublicHost,
-		"share-port-start":  &cfg.SharePortStart,
-		"share-port-end":    &cfg.SharePortEnd,
-		"share-host-key":    &cfg.ShareHostKey,
+		"tenant-db":               &cfg.TenantDB,
+		"bootstrap-password-file": &cfg.BootstrapPasswordFile,
+		"addr-dev":                &cfg.AddrDev,
+		"addr-user":               &cfg.AddrUser,
+		"addr-http-proxy":         &cfg.AddrHttpProxy,
+		"share-bind-host":         &cfg.ShareBindHost,
+		"share-public-host":       &cfg.SharePublicHost,
+		"share-port-start":        &cfg.SharePortStart,
+		"share-port-end":          &cfg.SharePortEnd,
+		"share-host-key":          &cfg.ShareHostKey,
 
 		"http-proxy-redir-url":    &cfg.HttpProxyRedirURL,
 		"http-proxy-redir-domain": &cfg.HttpProxyRedirDomain,
@@ -46,7 +48,8 @@ func parseConfig(c *cli.Command, cfg *server.Config) error {
 		"password":      &cfg.Password,
 		"allow-origins": &cfg.AllowOrigins,
 
-		"pprof": &cfg.PprofAddr,
+		"pprof":            &cfg.PprofAddr,
+		"pprof-token-file": &cfg.PprofTokenFile,
 
 		"sslcert": &cfg.SslCert,
 		"sslkey":  &cfg.SslKey,

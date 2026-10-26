@@ -265,6 +265,9 @@ func (dev *Device) ParseRegister(b []byte) error {
 		for typ, val := range attrs {
 			switch typ {
 			case proto.MsgRegAttrHeartbeat:
+				if len(val) != 1 || val[0] == 0 {
+					return fmt.Errorf("invalid registration heartbeat")
+				}
 				dev.heartbeat = time.Duration(val[0]) * time.Second
 			case proto.MsgRegAttrDevid:
 				dev.id = string(val)
@@ -370,6 +373,9 @@ func parseHeartbeat(dev *Device, data []byte) bool {
 		for typ, val := range attrs {
 			switch typ {
 			case proto.MsgHeartbeatAttrUptime:
+				if len(val) != 4 {
+					return false
+				}
 				dev.uptime = binary.BigEndian.Uint32(val)
 			}
 		}
@@ -384,6 +390,9 @@ func parseHeartbeat(dev *Device, data []byte) bool {
 }
 
 func handleLogoutMsg(dev *Device, data []byte) error {
+	if len(data) < 32 {
+		return fmt.Errorf("short logout message")
+	}
 	sid := string(data[:32])
 
 	if val, loaded := dev.users.LoadAndDelete(sid); loaded {
@@ -394,6 +403,9 @@ func handleLogoutMsg(dev *Device, data []byte) error {
 }
 
 func handleLoginMsg(dev *Device, data []byte) error {
+	if len(data) < 33 {
+		return fmt.Errorf("short login message")
+	}
 	sid := string(data[:32])
 	code := data[32]
 
@@ -447,6 +459,9 @@ func (dev *Device) ListSerialPorts(ctx context.Context) ([]string, error) {
 }
 
 func handleSerialPortsMsg(dev *Device, data []byte) error {
+	if len(data) < 33 {
+		return fmt.Errorf("short serial ports message")
+	}
 	id := string(data[:32])
 	value, ok := dev.serialRequests.LoadAndDelete(id)
 	if !ok {
@@ -486,6 +501,9 @@ func handleSerialPortsMsg(dev *Device, data []byte) error {
 }
 
 func handleSerialOpenMsg(dev *Device, data []byte) error {
+	if len(data) < 33 {
+		return fmt.Errorf("short serial open message")
+	}
 	sid := string(data[:32])
 	code := data[32]
 	value, loaded := dev.pending.LoadAndDelete(sid)
@@ -505,6 +523,9 @@ func handleSerialOpenMsg(dev *Device, data []byte) error {
 }
 
 func handleTermDataMsg(dev *Device, data []byte) error {
+	if len(data) < 32 {
+		return fmt.Errorf("short terminal message")
+	}
 	sid := string(data[:32])
 
 	if val, ok := dev.users.Load(sid); ok {
@@ -515,6 +536,9 @@ func handleTermDataMsg(dev *Device, data []byte) error {
 }
 
 func handleFileMsg(dev *Device, data []byte) error {
+	if len(data) < 33 {
+		return fmt.Errorf("short file message")
+	}
 	sid := string(data[:32])
 
 	if val, ok := dev.users.Load(sid); ok {
@@ -525,6 +549,9 @@ func handleFileMsg(dev *Device, data []byte) error {
 }
 
 func handleHttpMsg(dev *Device, data []byte) error {
+	if len(data) < 18 {
+		return fmt.Errorf("short HTTP message")
+	}
 	var saddr [18]byte
 
 	copy(saddr[:], data[:18])
@@ -553,7 +580,7 @@ func handleCmdMsg(dev *Device, data []byte) error {
 
 	var attrs map[string]any
 	err = jsoniter.Unmarshal(info.Attrs, &attrs)
-	if err != nil {
+	if err != nil || attrs == nil {
 		return fmt.Errorf("parse command resp attrs error: %v", err)
 	}
 

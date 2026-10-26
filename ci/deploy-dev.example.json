@@ -1,0 +1,8 @@
+{
+  "service": "ja-rttys-dev",
+  "binary": "/opt/ja-rttys-dev/rttys",
+  "database": "/opt/ja-rttys-dev/data/identity.db",
+  "backup_root": "/var/backups/ja-rttys-dev",
+  "console_url": "https://172.21.30.105:18446",
+  "tls_ca": "/opt/ja-rttys-dev/cert.pem"
+}

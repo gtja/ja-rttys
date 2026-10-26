@@ -78,7 +78,7 @@ func (u *User) onFileWindow(data []byte) {
 	switch data[0] {
 	case proto.MsgTypeFileSend:
 		*f = downloadFlow{id: randomID(), active: true, window: 1}
-		msg, _ := jsoniter.Marshal(map[string]any{"type": "sendfile", "name": string(data[1:]), "transfer_id": f.id, "max_window": maxDownloadWindow})
+		msg, _ := jsoniter.Marshal(map[string]any{"type": "sendfile", "name": downloadFilename(string(data[1:])), "transfer_id": f.id, "max_window": maxDownloadWindow})
 		if u.WriteMsg(websocket.TextMessage, msg) != nil {
 			u.Close()
 		}

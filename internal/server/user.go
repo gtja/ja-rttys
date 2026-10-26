@@ -9,10 +9,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/zhaojh329/rtty-go/proto"
 	xlog "github.com/zhaojh329/rttys/v5/internal/log"
@@ -81,6 +84,25 @@ func (user *User) OnFile(data []byte) {
 		return
 	}
 	user.onFileWindow(data)
+}
+
+func downloadFilename(name string) string {
+	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, name)
+	// Keep UTF-8 intact while bounding the filename passed to browsers.
+	name = strings.ToValidUTF8(name, "")
+	if len(name) > 255 {
+		name = strings.ToValidUTF8(name[:255], "")
+	}
+	if name == "" || name == "." || name == ".." || name == "/" {
+		return "download"
+	}
+	return name
 }
 
 type UserMsg struct {

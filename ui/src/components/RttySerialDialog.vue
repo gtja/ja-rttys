@@ -30,7 +30,7 @@ const openSerialPort = () => {
       group: props.group || '', port: settings.port, baudRate: String(settings.baudRate),
       dataBits: String(settings.dataBits), stopBits: String(settings.stopBits), parity: settings.parity
     })
-    window.open(`/serial/${props.dev.id}?${params}`, '_blank')
+    window.open(`/serial/${props.dev.id}?${params}`, '_blank', 'noopener,noreferrer')
   }, 100)
 }
 </script>

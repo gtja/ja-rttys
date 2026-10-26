@@ -5,6 +5,10 @@ After=network.target
 
 [Service]
 Type=simple
+StateDirectory=rttys
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/rttys
+UMask=0077
 ExecStart=/usr/bin/rttys -c /etc/rttys/rttys.conf
 Restart=always
 RestartSec=5

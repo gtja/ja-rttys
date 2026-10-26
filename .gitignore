@@ -22,3 +22,5 @@ internal/server/assets/dist
 credentials*
 access.txt
 evidence/
+out/
+__pycache__/

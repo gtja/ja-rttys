@@ -2,6 +2,8 @@ module github.com/zhaojh329/rttys/v5
 
 go 1.27.0
 
+toolchain go1.27.3
+
 require (
 	github.com/dwdcth/consoleEx v0.0.0-20180521133551-f56f6eb78b76
 	github.com/fanjindong/go-cache v0.0.6
@@ -48,7 +50,7 @@ require (
 	go.mongodb.org/mongo-driver/v2 v2.9.1 // indirect
 	golang.org/x/arch v0.31.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
-	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
