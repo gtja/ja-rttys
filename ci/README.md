@@ -5,8 +5,10 @@
 105 构建节点及版本追溯方式。本仓库保留单进程 SQLite、systemd 部署方式。
 
 默认每次构建只验证和出包，`PUBLISH_IMAGE=false`、`DEPLOY_TEST=false`。
-没有在本次改造中升级 204 服务，也没有修改其他服务或 Jenkins 任务。
-本地 Docker 验证和服务端接入边界见 [验证记录](verification.md)。
+2026-10-26 已创建 [ja-rttys 多分支任务](http://172.21.30.114:3214/job/ja-rttys/)，
+修复分支的 [首轮构建 #1](http://172.21.30.114:3214/job/ja-rttys/job/codex%252Fsecurity-scan-20261024/1/) 成功。
+没有升级 204 服务，没有修改其他服务或其他 Jenkins 任务。
+本地 Docker 和 Jenkins 实际节点验证结果见 [验证记录](verification.md)。
 
 ## 流程
 
@@ -39,7 +41,8 @@ GitHub Actions 上游示例仍保存在 `docs/upstream-workflows`，未启用。
 导入 [jenkins-multibranch.xml](jenkins-multibranch.xml)，任务名称建议 `ja-rttys`。
 配置按每 5 分钟扫描，初始包含 `master dev test release codex/security-scan-20261024`；
 只有存在 Jenkinsfile 的分支会创建子任务。默认参数会执行验证和出包。
-本文件可在 Jenkins 可达时导入，不代表任务已经创建或运行成功。
+上述任务已导入现有 114 Jenkins；当前运行的是 `codex/security-scan-20261024` 修复分支，
+未将该分支合并到 master/dev。其他 Jenkins 安装可使用此 XML 接入。
 
 复用历史工程中的凭据 ID，不复制任何凭据值：
 
@@ -89,4 +92,5 @@ SOURCE_COMMIT="$(git rev-parse HEAD)" PACKAGE_VERSION=local-check TARGET_ARCH=am
 
 构建与测试证据在 `out/`；Git 和 Docker 上下文均排除该目录。
 源代码审计与业务回归的已有结果见 [扫描整改说明](../README-TENANT.md#security-scan-remediation-2026-10-24)。
-Jenkins 服务端语法验证、实际节点镜像构建、registry 推送及 CD 需要在目标网络可达后执行。
+Jenkins 服务端语法验证、105 实际节点检查和双架构镜像构建已通过；
+registry 登录推送和 204 远端部署尚未执行。启用部署前仍须完成目标配置与 SSH 公钥凭据核验。
