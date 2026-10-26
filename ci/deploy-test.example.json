@@ -1,8 +1,0 @@
-{
-  "service": "rttys-tenant-poc",
-  "binary": "/opt/rttys-tenant-poc/rttys",
-  "database": "/opt/rttys-tenant-poc/data/identity.db",
-  "backup_root": "/var/backups/ja-rttys",
-  "console_url": "https://172.21.30.204:18446",
-  "tls_ca": "/opt/rttys-tenant-poc/cert.pem"
-}

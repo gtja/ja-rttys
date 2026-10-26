@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject>
   <actions/>
-  <description>ja-rttys 独立 CI：验证及双架构出包。镜像推送和已有 204 实例升级默认关闭。</description>
+  <description>ja-rttys 独立 CI：验证及双架构出包。dev 部署目标为 105；镜像推送及部署默认关闭。</description>
   <properties/>
   <healthMetrics/>
   <orphanedItemStrategy class="com.cloudbees.hudson.plugins.folder.computed.DefaultOrphanedItemStrategy">

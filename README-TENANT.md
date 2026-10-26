@@ -41,6 +41,7 @@ The test device uses unmodified `rtty-go v1.2.2` with a root-readable config fil
 ## Authorized test environment
 
 - Server: `172.21.30.204`, service `rttys-tenant-poc`, root `/opt/rttys-tenant-poc`.
+  This is the tenant feature-test instance. The dev CI deployment target is 105; see [CI/CD](ci/README.md).
 - Console: `https://172.21.30.204:18446/`; device TLS: `19512`.
 - Web proxy: `https://<session>.172.21.30.204.sslip.io:18447/`. Test-only DNS dependency; production must use an organization-controlled wildcard hostname and dedicated console hostname.
 - Device: `172.21.0.156`, service `rtty-tenant-poc`, root `/opt/rtty-tenant-poc`.
