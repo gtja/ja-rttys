@@ -84,14 +84,16 @@ fi
 stage=$(mktemp -d /opt/.install-rtty.XXXXXX)
 cleanup() { rm -rf -- "$stage"; }
 trap cleanup EXIT
-yaml_string() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
+# rtty-go uses a simple config parser that retains YAML quote characters.
+# Every value is validated as a single line before writing; never shell-evaluate it.
+config_scalar() { printf '%s' "$1"; }
 install -m 0755 "$bundle/bin/rtty-linux-$arch" "$stage/rtty"
 install -m 0644 "$bundle/cert.pem" "$stage/cert.pem"
 {
-  printf 'id: '; yaml_string "$device_id"; printf '\nhost: '; yaml_string "$host"
+  printf 'id: '; config_scalar "$device_id"; printf '\nhost: '; config_scalar "$host"
   printf '\nport: %s\nssl: true\ncacert: /opt/rtty-tenant-poc/cert.pem\nreconnect: true\nheartbeat: 5\nusername: ' "$port"
-  yaml_string "$login_user"; printf '\ndescription: '; yaml_string "$description"
-  printf '\ntoken: '; yaml_string "$token"; printf '\n'
+  config_scalar "$login_user"; printf '\ndescription: '; config_scalar "$description"
+  printf '\ntoken: '; config_scalar "$token"; printf '\n'
 } > "$stage/rtty.conf"
 unset token
 cat > "$stage/service" <<'UNIT'
