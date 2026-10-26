@@ -173,6 +173,7 @@ func run() {
 		json.NewDecoder(r.Body).Decode(&rows)
 		r.Body.Close()
 		check(v.name, len(rows) == 1 && rows[0]["id"] == v.id, rows)
+		check("actual registration description exposed", rows[0]["client_description"] == "fixture", rows[0]["client_description"])
 	}
 	wsURL := "wss" + strings.TrimPrefix(base, "https") + "/api/connect/" + f.DeviceA["id"]
 	headers := http.Header{}
@@ -358,13 +359,92 @@ func run() {
 	r = call(a, "GET", "/api/devs", nil)
 	check("revoked login rejects API", r.StatusCode == 401, r.StatusCode)
 	r.Body.Close()
-	r = call(admin, "POST", "/api/manage/devices/"+f.DeviceA["id"]+"/rotate", map[string]string{})
+	r = call(admin, "POST", "/api/manage/devices/"+f.DeviceA["id"]+"/rotate", map[string]string{"confirm_wire_id": "same-device"})
 	check("rotate device secret", r.StatusCode == 200, r.StatusCode)
 	r.Body.Close()
 	time.Sleep(200 * time.Millisecond)
 	c, _, code := register("same-device", f.DeviceA["token"], "")
 	check("old device secret rejected", code != 0, code)
 	c.Close()
+	// Device lifecycle contract: metadata, confirmed rotation, deletion and revocation.
+	r = call(admin, "POST", "/api/manage/devices", map[string]string{"wire_id": "delete-device", "name": "friendly label"})
+	check("enroll lifecycle device", r.StatusCode == 201, r.StatusCode)
+	var life map[string]string
+	json.NewDecoder(r.Body).Decode(&life)
+	r.Body.Close()
+	lc, lm, code := register("delete-device", life["token"], "")
+	check("lifecycle first registration", code == 0, code)
+	fake(lc, lm)
+	defer lc.Close()
+	for _, q := range []string{"delete-device", "fixture"} {
+		r = call(admin, "GET", "/api/devs?q="+q, nil)
+		var rows []map[string]any
+		json.NewDecoder(r.Body).Decode(&rows)
+		r.Body.Close()
+		found := false
+		for _, d := range rows {
+			if d["id"] == life["id"] && d["client_description"] == "fixture" {
+				found = true
+			}
+		}
+		check("search registered identity "+q, found, rows)
+	}
+	r = call(admin, "POST", "/api/manage/devices/"+life["id"]+"/rotate", map[string]string{})
+	check("rotation requires identity confirmation", r.StatusCode == 400, r.StatusCode)
+	r.Body.Close()
+	r = call(b, "DELETE", "/api/manage/devices/"+life["id"], nil)
+	check("foreign tenant cannot soft delete", r.StatusCode == 404, r.StatusCode)
+	r.Body.Close()
+	r = call(op, "DELETE", "/api/manage/devices/"+life["id"], nil)
+	check("operator cannot soft delete", r.StatusCode == 403, r.StatusCode)
+	r.Body.Close()
+	r = call(admin, "POST", "/api/manage/devices/"+life["id"]+"/rotate", map[string]string{"confirm_wire_id": "delete-device"})
+	check("confirmed token reset", r.StatusCode == 200, r.StatusCode)
+	var rotated map[string]string
+	json.NewDecoder(r.Body).Decode(&rotated)
+	r.Body.Close()
+	old, _, code := register("delete-device", life["token"], "")
+	check("reset rejects old token", code != 0, code)
+	old.Close()
+	lc.Close()
+	time.Sleep(200 * time.Millisecond)
+	lc, lm, code = register("delete-device", rotated["token"], "")
+	check("reset accepts new token", code == 0, code)
+	fake(lc, lm)
+	defer lc.Close()
+	ah := http.Header{"Origin": []string{base}}
+	for _, c := range admin.Jar.Cookies(req.URL) {
+		ah.Add("Cookie", c.String())
+	}
+	lw, _, err := dial.Dial("wss"+strings.TrimPrefix(base, "https")+"/api/connect/"+life["id"], ah)
+	if err != nil {
+		panic(err)
+	}
+	defer lw.Close()
+	lw.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err := lw.ReadMessage()
+	check("lifecycle live terminal", err == nil && bytes.Contains(msg, []byte("login")), string(msg))
+	r = call(admin, "DELETE", "/api/manage/devices/"+life["id"], nil)
+	check("soft delete accepted", r.StatusCode == 200, r.StatusCode)
+	r.Body.Close()
+	lw.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _, err = lw.ReadMessage()
+	check("soft delete closes terminal", err != nil, fmt.Sprint(err))
+	old, _, code = register("delete-device", rotated["token"], "")
+	check("deleted device cannot reconnect", code != 0, code)
+	old.Close()
+	r = call(admin, "GET", "/api/dev/"+life["id"], nil)
+	check("deleted detail hidden", r.StatusCode == 404, r.StatusCode)
+	r.Body.Close()
+	r = call(admin, "GET", "/api/manage/snapshot", nil)
+	var snap map[string]any
+	json.NewDecoder(r.Body).Decode(&snap)
+	r.Body.Close()
+	check("deleted device absent from inventory", !bytes.Contains(mustJSON(snap["devices"]), []byte(life["id"])), snap["devices"])
+	check("soft deletion audited", bytes.Contains(mustJSON(snap["audit"]), []byte("DELETE /api/manage/devices/:id")), "audit event")
+	r = call(admin, "PATCH", "/api/manage/devices/"+life["id"], map[string]bool{"disabled": false})
+	check("deleted device cannot be enabled", r.StatusCode == 404, r.StatusCode)
+	r.Body.Close()
 	for i := 0; i < 10; i++ {
 		r = call(admin, "POST", "/api/signin", map[string]string{"username": "admin", "password": "intentionally-wrong"})
 		r.Body.Close()

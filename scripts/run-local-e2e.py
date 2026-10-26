@@ -59,6 +59,8 @@ try:
   with c.open(env['RTTY_URL']+'/api/devs',timeout=5) as response:devices=json.load(response)
   result['restart_persistence']=len(devices)==1 and devices[0]['id']==fixture['device_b']['id']
   if not result['restart_persistence']:raise RuntimeError('restart lost persisted identity')
+  result['registration_metadata_persistence']=devices[0].get('client_description')=='fixture' and devices[0].get('last_registered_at',0)>0
+  if not result['registration_metadata_persistence']:raise RuntimeError('restart lost registration metadata')
 except Exception as e:
  result['error']=str(e)
  raise

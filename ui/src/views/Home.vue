@@ -18,13 +18,14 @@
      <template v-if="tab==='devices'">
       <div class="fleet-summary"><div><span class="summary-icon"><ConsoleIcon name="device"/></span><span>设备总数<strong>{{allDevices.length}}</strong></span></div><div><i class="dot green"/>在线<strong>{{onlineCount}}</strong></div><div><i class="dot"/>离线<strong>{{allDevices.filter(d=>!d.online&&!d.disabled).length}}</strong></div><div class="summary-context">当前租户内的可见设备</div></div>
       <section class="surface">
-       <div class="table-controls"><div class="filter-tabs" aria-label="设备状态"><button v-for="f in deviceFilters" :key="f.value" :class="{active:deviceFilter===f.value}" @click="deviceFilter=f.value;devicePage=1">{{f.label}}</button></div><el-input v-model="search" @input="devicePage=1" placeholder="搜索设备名称、编号或分组" aria-label="搜索设备" clearable class="search-input"><template #prefix><ConsoleIcon name="search"/></template></el-input></div>
+       <div class="table-controls"><div class="filter-tabs" aria-label="设备状态"><button v-for="f in deviceFilters" :key="f.value" :class="{active:deviceFilter===f.value}" @click="deviceFilter=f.value;devicePage=1">{{f.label}}</button></div><el-input v-model="search" @input="devicePage=1" placeholder="搜索名称、-I 编号、-D 描述或分组" aria-label="搜索设备" clearable class="search-input"><template #prefix><ConsoleIcon name="search"/></template></el-input></div>
        <el-table :data="pagedDevices" row-key="id" empty-text="没有符合条件的设备" class="device-table">
         <el-table-column label="设备" min-width="230"><template #default="{row}"><div class="identity-cell"><span class="machine-icon"><ConsoleIcon name="device"/></span><div><b>{{row.description||row.name||row.wire_id}}</b><small>{{row.wire_id}}</small></div></div></template></el-table-column>
+        <el-table-column label="注册参数（-I / -D）" min-width="240"><template #default="{row}"><div class="registration-params"><span><b>-I</b> <code>{{row.wire_id}}</code></span><span><b>-D</b> {{row.last_registered_at ? (row.client_description || '（空描述）') : '尚未注册上报'}}</span></div></template></el-table-column>
         <el-table-column label="状态" width="110"><template #default="{row}"><span :class="['state-label',{online:row.online,disabled:row.disabled}]"><i/>{{row.disabled?'已停用':row.online?'在线':'离线'}}</span></template></el-table-column>
         <el-table-column label="所属分组" min-width="230"><template #default="{row}"><div class="tags"><span v-for="g in groupsFor(row)" :key="g">{{g}}</span><em v-if="!groupsFor(row).length">未分组</em></div></template></el-table-column>
         <el-table-column label="连接时长" width="120"><template #default="{row}"><span class="secondary">{{row.online?duration(row.connected):'—'}}</span></template></el-table-column>
-        <el-table-column label="操作" width="260" align="right"><template #default="{row}"><div class="row-actions"><el-button :disabled="!row.online||!row.can_operate" type="primary" plain @click="connect(row)"><ConsoleIcon name="terminal"/>终端</el-button><el-button :disabled="!row.online||!row.can_operate" text @click="web.dev=row;web.modal=true">Web</el-button><el-dropdown v-if="manager" trigger="click" @command="cmd=>deviceAction(cmd,row)"><el-button text aria-label="设备更多操作"><ConsoleIcon name="more"/></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="groups">设置分组</el-dropdown-item><el-dropdown-item command="rotate">轮换接入凭据</el-dropdown-item><el-dropdown-item command="disable" divided>{{row.disabled?'启用设备':'停用设备'}}</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></template></el-table-column>
+        <el-table-column label="操作" width="260" align="right"><template #default="{row}"><div class="row-actions"><el-button :disabled="!row.online||!row.can_operate" type="primary" plain @click="connect(row)"><ConsoleIcon name="terminal"/>终端</el-button><el-button :disabled="!row.online||!row.can_operate" text @click="web.dev=row;web.modal=true">Web</el-button><el-dropdown v-if="manager" trigger="click" @command="cmd=>deviceAction(cmd,row)"><el-button text aria-label="设备更多操作"><ConsoleIcon name="more"/></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="groups">设置分组</el-dropdown-item><el-dropdown-item command="rotate">重置 Token</el-dropdown-item><el-dropdown-item command="disable" divided>{{row.disabled?'启用设备':'停用设备'}}</el-dropdown-item><el-dropdown-item command="delete" divided>软删除设备</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></template></el-table-column>
        </el-table>
        <div class="table-bottom"><span>共 {{filteredDevices.length}} 台设备</span><el-pagination v-model:current-page="devicePage" :page-size="12" :total="filteredDevices.length" layout="prev, pager, next" hide-on-single-page/></div>
       </section>
@@ -96,7 +97,7 @@ async function addMember(){await action(()=>axios.put('/api/manage/members',{...
 async function removeMember(u){await action(()=>axios.delete(`/api/manage/members/${u.id}`))}
 async function changeDisabled(kind,row){await action(()=>axios.patch(`/api/manage/${kind}/${row.id}`,{disabled:!row.disabled}))}
 async function enroll(){await action(async()=>{const {data}=await axios.post('/api/manage/devices',{...device,web_targets:webTargets.value.split(',').map(s=>s.trim()).filter(Boolean)});credential.value=`设备编号：${data.wire_id}\nToken：${data.token}`;if(enrollGroups.value.length)await axios.put(`/api/manage/devices/${data.id}/groups`,{groups:enrollGroups.value})})}
-async function rotate(d){await action(async()=>{const {data}=await axios.post(`/api/manage/devices/${d.id}/rotate`,{});credential.value=`设备编号：${d.wire_id}\n新 Token：${data.token}`})}
+async function rotate(d){await action(async()=>{const {data}=await axios.post(`/api/manage/devices/${d.id}/rotate`,{confirm_wire_id:d.wire_id});credential.value=`设备编号：${d.wire_id}\n新 Token：${data.token}`})}
 async function changeGrant(access){await action(()=>axios.put('/api/manage/grants',{...grant,access}))}
 function groupsFor(d){return d.groups||(snapshot.value.device_groups||[]).filter(g=>g.device_id===d.id).map(g=>g.group)}
 async function createGroup(){await action(async()=>{await axios.post('/api/manage/groups',{name:newGroup.value});newGroup.value=''})}
@@ -114,7 +115,7 @@ const navItems=computed(()=>nav.filter(n=>n.key==='devices'||(manager.value&&(n.
 const pageInfo=computed(()=>nav.find(n=>n.key===tab.value)||nav[0])
 const tenantName=computed(()=>me.value.tenants?.find(t=>t.id===tenant.value)?.name||'选择租户')
 const allDevices=computed(()=>manager.value?(snapshot.value.devices||[]).map(d=>({...d,...devices.value.find(x=>x.id===d.id),groups:groupsFor(d)})):devices.value)
-const filteredDevices=computed(()=>allDevices.value.filter(d=>(deviceFilter.value==='all'||(deviceFilter.value==='online'?d.online:deviceFilter.value==='disabled'?d.disabled:!d.online&&!d.disabled))&&`${d.wire_id} ${d.description||d.name||''} ${groupsFor(d).join(' ')}`.toLowerCase().includes(search.value.toLowerCase())))
+const filteredDevices=computed(()=>allDevices.value.filter(d=>(deviceFilter.value==='all'||(deviceFilter.value==='online'?d.online:deviceFilter.value==='disabled'?d.disabled:!d.online&&!d.disabled))&&`${d.wire_id} ${d.description||d.name||''} ${d.client_description||''} ${groupsFor(d).join(' ')}`.toLowerCase().includes(search.value.toLowerCase())))
 const pagedDevices=computed(()=>filteredDevices.value.slice((devicePage.value-1)*12,devicePage.value*12))
 const onlineCount=computed(()=>devices.value.filter(d=>d.online).length)
 const activeMember=computed(()=>snapshot.value.members?.find(u=>u.id===selectedMember.value))
@@ -131,11 +132,26 @@ function duration(seconds){const n=Math.max(0,Number(seconds)||0);return n>=8640
 function roleLabel(role){return {admin:'租户管理员',operator:'运维成员',viewer:'查看者'}[role]||'未选择租户'}
 function formatTime(at){return new Date(Number(at)*1000).toLocaleString('zh-CN',{hour12:false})}
 function resourceLabel(id){return snapshot.value.devices?.find(d=>d.id===id)?.wire_id||snapshot.value.members?.find(u=>u.id===id)?.username||id||'—'}
-function actionLabel(action){return {'access-open':'开启远程会话','access-close':'关闭远程会话','POST /api/manage/groups':'创建分组','PATCH /api/manage/groups/:name':'重命名分组','DELETE /api/manage/groups/:name':'删除分组','PUT /api/manage/devices/:id/groups':'更新设备分组','PUT /api/manage/grants':'更新访问授权','POST /api/manage/devices':'登记设备','PUT /api/manage/members':'更新成员角色','DELETE /api/manage/members/:id':'移除成员','POST /api/manage/users':'创建账号'}[action]||action}
+function actionLabel(action){return {'access-open':'开启远程会话','access-close':'关闭远程会话','POST /api/manage/groups':'创建分组','PATCH /api/manage/groups/:name':'重命名分组','DELETE /api/manage/groups/:name':'删除分组','PUT /api/manage/devices/:id/groups':'更新设备分组','PUT /api/manage/grants':'更新访问授权','POST /api/manage/devices':'登记设备','DELETE /api/manage/devices/:id':'软删除设备','POST /api/manage/devices/:id/rotate':'重置设备 Token','PUT /api/manage/members':'更新成员角色','DELETE /api/manage/members/:id':'移除成员','POST /api/manage/users':'创建账号'}[action]||action}
 async function submitForm(){const createdGroup=newGroup.value;const actions={device:enroll,group:createGroup,member:createUser,grant:()=>changeGrant(true),tenant:createTenant,'existing-member':addMember};if(actions[form.value]){await actions[form.value]();if(!error.value){if(form.value==='group')selectedGroup.value=createdGroup;form.value=''}}}
 async function confirmRemoveMember(u){try{await ElMessageBox.confirm(`移除 ${u.username} 后，其本租户会话和授权将撤销。`,'移除成员',{confirmButtonText:'移除',cancelButtonText:'取消',type:'warning'})}catch{return}await removeMember(u)}
 async function confirmDisable(kind,row){try{await ElMessageBox.confirm(row.disabled?'恢复启用该对象？':'停用后相关会话将断开。确认停用？','更新状态',{confirmButtonText:'确认',cancelButtonText:'取消',type:'warning'})}catch{return}await changeDisabled(kind,row)}
-async function deviceAction(cmd,d){error.value='';if(cmd==='groups')editGroups(d);if(cmd==='disable')await confirmDisable('devices',d);if(cmd==='rotate'){try{await ElMessageBox.confirm('轮换后旧凭据立即失效，设备需要更新凭据才能重连。','轮换接入凭据',{confirmButtonText:'轮换',cancelButtonText:'取消',type:'warning'})}catch{return}await rotate(d)}}
+async function deviceAction(cmd,d){
+ error.value=''
+ if(cmd==='groups')editGroups(d)
+ if(cmd==='disable')await confirmDisable('devices',d)
+ if(cmd==='delete'){
+  try{await ElMessageBox.confirm(`软删除 ${d.wire_id} 后将从列表隐藏、断开设备及会话，并永久作废当前 Token。审计记录和设备编号仍保留，不能直接重新登记同一编号。`,'软删除设备',{confirmButtonText:'确认软删除',cancelButtonText:'取消',type:'warning'})}catch{return}
+  await action(()=>axios.delete(`/api/manage/devices/${d.id}`))
+ }
+ if(cmd==='rotate'){
+  try{
+   await ElMessageBox.confirm(`重置 ${d.wire_id} 的 Token 后，当前连接会断开，旧 Token 永久失效。`,'重置 Token · 第一步确认',{confirmButtonText:'继续确认',cancelButtonText:'取消',type:'warning'})
+   await ElMessageBox.prompt(`请再次输入设备编号 ${d.wire_id}。完成重置后必须将新 Token 配置到客户端。`,'重置 Token · 最终确认',{confirmButtonText:'确认重置',cancelButtonText:'取消',inputPlaceholder:'输入完整设备编号',inputValidator:value=>value===d.wire_id||'设备编号不一致',type:'warning'})
+  }catch{return}
+  await rotate(d)
+ }
+}
 function groupAction(cmd){if(cmd==='rename')Object.assign(renameGroup,{old:selectedGroup.value,name:selectedGroup.value,open:true});else if(cmd==='delete')deleteGroup({name:selectedGroup.value})}
 async function revokeGrant(row){Object.assign(grant,{user_id:row.user_id,device_id:row.device_id,group:row.group});await changeGrant(false)}
 </script>

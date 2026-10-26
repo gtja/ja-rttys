@@ -55,14 +55,17 @@ type Actor struct {
 	Expires  int64  `json:"-"`
 }
 type TenantDevice struct {
-	ID         string   `json:"id"`
-	Tenant     string   `json:"tenant_id"`
-	WireID     string   `json:"wire_id"`
-	Group      string   `json:"group"`
-	Groups     []string `json:"groups"`
-	Name       string   `json:"name"`
-	Disabled   bool     `json:"disabled"`
-	WebTargets []string `json:"web_targets"`
+	ID                string   `json:"id"`
+	Tenant            string   `json:"tenant_id"`
+	WireID            string   `json:"wire_id"`
+	Group             string   `json:"group"`
+	Groups            []string `json:"groups"`
+	Name              string   `json:"name"`
+	Disabled          bool     `json:"disabled"`
+	DeletedAt         int64    `json:"deleted_at"`
+	ClientDescription string   `json:"client_description"`
+	LastRegisteredAt  int64    `json:"last_registered_at"`
+	WebTargets        []string `json:"web_targets"`
 }
 
 func randomID() string {
@@ -108,7 +111,7 @@ func openTenantAuth(srv *RttyServer) (*TenantAuth, error) {
 		db.Close()
 		return nil, err
 	}
-	if err = migrateGroups(db); err != nil {
+	if err = migrateDeviceLifecycle(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -187,7 +190,7 @@ func (a *TenantAuth) actor(sid string) (*Actor, error) {
 func (a *TenantAuth) deviceLocked(id string) (*TenantDevice, error) {
 	d := new(TenantDevice)
 	var targets string
-	err := a.db.QueryRow("SELECT id,tenant,wire_id,grp,name,disabled,web_targets FROM devices WHERE id=?", id).Scan(&d.ID, &d.Tenant, &d.WireID, &d.Group, &d.Name, &d.Disabled, &targets)
+	err := a.db.QueryRow("SELECT id,tenant,wire_id,grp,name,disabled,web_targets,deleted_at,client_description,last_registered_at FROM devices WHERE id=?", id).Scan(&d.ID, &d.Tenant, &d.WireID, &d.Group, &d.Name, &d.Disabled, &targets, &d.DeletedAt, &d.ClientDescription, &d.LastRegisteredAt)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +207,7 @@ func (a *TenantAuth) deviceLocked(id string) (*TenantDevice, error) {
 	return d, nil
 }
 func (a *TenantAuth) allowedLocked(p *Actor, d *TenantDevice, operate bool) bool {
-	if p.Tenant == "" || p.Tenant != d.Tenant || d.Disabled {
+	if p.Tenant == "" || p.Tenant != d.Tenant || d.Disabled || d.DeletedAt != 0 {
 		return false
 	}
 	if p.Role == "admin" {
@@ -228,7 +231,7 @@ func (a *TenantAuth) access(sid, id string, operate bool) (*Actor, *TenantDevice
 		return nil, nil, err
 	}
 	d, err := a.deviceLocked(id)
-	if err != nil || d.Tenant != p.Tenant {
+	if err != nil || d.Tenant != p.Tenant || d.DeletedAt != 0 {
 		return p, nil, sql.ErrNoRows
 	}
 	if !a.allowedLocked(p, d, operate) {
@@ -289,8 +292,14 @@ func (a *TenantAuth) register(dev *Device) byte {
 	}
 	var id, tenant, wire, hash string
 	var disabled, tenantDisabled bool
-	err := a.db.QueryRow(`SELECT d.id,d.tenant,d.wire_id,d.key_hash,d.disabled,t.disabled FROM devices d JOIN tenants t ON d.tenant=t.id WHERE d.key_hash=?`, digest(dev.token)).Scan(&id, &tenant, &wire, &hash, &disabled, &tenantDisabled)
+	err := a.db.QueryRow(`SELECT d.id,d.tenant,d.wire_id,d.key_hash,d.disabled,t.disabled FROM devices d JOIN tenants t ON d.tenant=t.id WHERE d.key_hash=? AND d.deleted_at=0`, digest(dev.token)).Scan(&id, &tenant, &wire, &hash, &disabled, &tenantDisabled)
 	if err != nil || disabled || tenantDisabled || wire != dev.id || subtle.ConstantTimeCompare([]byte(hash), []byte(digest(dev.token))) != 1 {
+		return devRegErrInvalidToken
+	}
+	if a.srv.GetDevice(tenant, id) != nil {
+		return devRegErrIdConflicting
+	}
+	if _, err = a.db.Exec("UPDATE devices SET client_description=?,last_registered_at=? WHERE id=?", dev.desc, time.Now().Unix(), id); err != nil {
 		return devRegErrInvalidToken
 	}
 	// Never trust a device-supplied group as its tenant or routing identity.

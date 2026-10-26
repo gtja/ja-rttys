@@ -225,6 +225,7 @@ func (a *TenantAuth) routes(r *gin.Engine) {
 	api.PUT("/manage/members", a.manage)
 	api.DELETE("/manage/members/:id", a.manage)
 	api.POST("/manage/devices", a.manage)
+	api.DELETE("/manage/devices/:id", a.softDeleteDevice)
 	api.PATCH("/manage/devices/:id", a.manage)
 	api.POST("/manage/devices/:id/rotate", a.manage)
 	api.PUT("/manage/grants", a.manage)
@@ -308,7 +309,7 @@ func (a *TenantAuth) list(c *gin.Context, kind string) {
 		c.Status(401)
 		return
 	}
-	rows, err := a.db.Query("SELECT id FROM devices WHERE tenant=? AND disabled=0", p.Tenant)
+	rows, err := a.db.Query("SELECT id FROM devices WHERE tenant=? AND disabled=0 AND deleted_at=0", p.Tenant)
 	if err != nil {
 		c.Status(503)
 		return
@@ -331,13 +332,16 @@ func (a *TenantAuth) list(c *gin.Context, kind string) {
 		if !a.allowedLocked(p, d, false) {
 			continue
 		}
+		if q := strings.ToLower(strings.TrimSpace(c.Query("q"))); q != "" && !strings.Contains(strings.ToLower(d.WireID+" "+d.Name+" "+d.ClientDescription+" "+strings.Join(d.Groups, " ")), q) {
+			continue
+		}
 		for _, g := range d.Groups {
 			groups[g] = true
 		}
 		if kind == "devs" && c.Query("group") != "" && !deviceHasGroup(d, c.Query("group")) {
 			continue
 		}
-		info := gin.H{"id": id, "wire_id": d.WireID, "group": d.Group, "groups": d.Groups, "description": d.Name, "can_operate": a.allowedLocked(p, d, true), "online": false, "proto": 0, "connected": 0, "uptime": 0, "ipaddr": ""}
+		info := gin.H{"id": id, "wire_id": d.WireID, "group": d.Group, "groups": d.Groups, "description": d.Name, "name": d.Name, "client_description": d.ClientDescription, "last_registered_at": d.LastRegisteredAt, "can_operate": a.allowedLocked(p, d, true), "online": false, "proto": 0, "connected": 0, "uptime": 0, "ipaddr": ""}
 		if dev := a.srv.GetDevice(p.Tenant, id); dev != nil {
 			info["online"] = true
 			info["proto"] = dev.proto
@@ -362,18 +366,19 @@ func (a *TenantAuth) list(c *gin.Context, kind string) {
 }
 
 type manageInput struct {
-	Name       string   `json:"name"`
-	Username   string   `json:"username"`
-	Password   string   `json:"password"`
-	Tenant     string   `json:"tenant_id"`
-	User       string   `json:"user_id"`
-	Role       string   `json:"role"`
-	WireID     string   `json:"wire_id"`
-	Group      string   `json:"group"`
-	Device     string   `json:"device_id"`
-	Access     bool     `json:"access"`
-	Disabled   *bool    `json:"disabled"`
-	WebTargets []string `json:"web_targets"`
+	Name          string   `json:"name"`
+	Username      string   `json:"username"`
+	Password      string   `json:"password"`
+	Tenant        string   `json:"tenant_id"`
+	User          string   `json:"user_id"`
+	Role          string   `json:"role"`
+	WireID        string   `json:"wire_id"`
+	Group         string   `json:"group"`
+	ConfirmWireID string   `json:"confirm_wire_id"`
+	Device        string   `json:"device_id"`
+	Access        bool     `json:"access"`
+	Disabled      *bool    `json:"disabled"`
+	WebTargets    []string `json:"web_targets"`
 }
 
 func validName(s string) bool {
@@ -432,6 +437,7 @@ func (a *TenantAuth) manage(c *gin.Context) {
 	id := c.Param("id")
 	result := gin.H{"ok": true}
 	status := 200
+	audited := false
 	fail := func(e error) bool {
 		if e != nil {
 			c.JSON(409, gin.H{"error": "operation rejected; check uniqueness and references"})
@@ -589,13 +595,32 @@ func (a *TenantAuth) manage(c *gin.Context) {
 		result = gin.H{"id": id, "wire_id": in.WireID, "token": token}
 	case strings.HasPrefix(path, "/api/manage/devices/:id"):
 		d, e := a.deviceLocked(id)
-		if e != nil || d.Tenant != p.Tenant {
+		if e != nil || d.Tenant != p.Tenant || d.DeletedAt != 0 {
 			c.Status(404)
 			return
 		}
 		if strings.HasSuffix(path, "/rotate") {
+			if in.ConfirmWireID != d.WireID {
+				c.JSON(400, gin.H{"error": "请再次确认设备编号后重置 Token"})
+				return
+			}
 			token := randomID()
-			_, err = a.db.Exec("UPDATE devices SET key_hash=? WHERE id=?", digest(token), id)
+			tx, e := a.db.Begin()
+			if fail(e) {
+				return
+			}
+			defer tx.Rollback()
+			_, err = tx.Exec("UPDATE devices SET key_hash=? WHERE id=?", digest(token), id)
+			if err == nil {
+				_, err = tx.Exec("INSERT INTO audit(at,user,tenant,action,resource,result) VALUES(?,?,?,?,?,'ok')", time.Now().Unix(), p.ID, p.Tenant, c.Request.Method+" "+path, id)
+			}
+			if err == nil {
+				err = tx.Commit()
+			}
+			if fail(err) {
+				return
+			}
+			audited = true
 			result = gin.H{"token": token}
 		} else if in.Disabled != nil {
 			_, err = a.db.Exec("UPDATE devices SET disabled=? WHERE id=?", *in.Disabled, id)
@@ -622,7 +647,7 @@ func (a *TenantAuth) manage(c *gin.Context) {
 		}
 		if in.Device != "" {
 			d, e := a.deviceLocked(in.Device)
-			if e != nil || d.Tenant != p.Tenant {
+			if e != nil || d.Tenant != p.Tenant || d.DeletedAt != 0 {
 				c.Status(404)
 				return
 			}
@@ -653,7 +678,7 @@ func (a *TenantAuth) manage(c *gin.Context) {
 	if fail(err) {
 		return
 	}
-	if fail(a.auditLocked(p, c.Request.Method+" "+path, id)) {
+	if !audited && fail(a.auditLocked(p, c.Request.Method+" "+path, id)) {
 		return
 	}
 	c.JSON(status, result)
@@ -703,7 +728,7 @@ func (a *TenantAuth) snapshot(c *gin.Context) {
 		return out, rows.Err()
 	}
 	result := map[string]any{}
-	queries := map[string]string{"groups": "SELECT name FROM tenant_groups WHERE tenant=? ORDER BY name", "device_groups": "SELECT device AS device_id,grp AS 'group' FROM device_groups WHERE tenant=? ORDER BY grp", "devices": "SELECT id,wire_id,grp AS 'group',name,disabled FROM devices WHERE tenant=?", "members": "SELECT u.id,u.username,u.disabled,m.role FROM members m JOIN users u ON u.id=m.user WHERE m.tenant=?", "grants": "SELECT user AS user_id,device AS device_id,grp AS 'group' FROM grants WHERE tenant=?", "audit": "SELECT at,user,action,resource,result FROM audit WHERE tenant=? ORDER BY id DESC LIMIT 100"}
+	queries := map[string]string{"groups": "SELECT name FROM tenant_groups WHERE tenant=? ORDER BY name", "device_groups": "SELECT dg.device AS device_id,dg.grp AS 'group' FROM device_groups dg JOIN devices d ON d.id=dg.device WHERE dg.tenant=? AND d.deleted_at=0 ORDER BY dg.grp", "devices": "SELECT id,wire_id,grp AS 'group',name,disabled,client_description,last_registered_at FROM devices WHERE tenant=? AND deleted_at=0", "members": "SELECT u.id,u.username,u.disabled,m.role FROM members m JOIN users u ON u.id=m.user WHERE m.tenant=?", "grants": "SELECT user AS user_id,device AS device_id,grp AS 'group' FROM grants WHERE tenant=?", "audit": "SELECT at,user,action,resource,result FROM audit WHERE tenant=? ORDER BY id DESC LIMIT 100"}
 	for name, q := range queries {
 		v, e := query(q, p.Tenant)
 		if e != nil {

@@ -32,3 +32,5 @@
 /* Keep operational text readable at normal desktop scaling. */
 .console-app .heading p,.console-app .detail-heading p,.console-app .secondary,.console-app .context-note,.console-app .footnote{color:#748198}
 .console-app .el-table{font-size:13px}.console-app .el-table th.el-table__cell{font-size:12px;color:#7b879b}.console-app .el-table td.el-table__cell{padding:14px 0}.console-app .identity-cell b,.console-app .collection-item b{font-size:13px;color:#4d5c76}.console-app .tags>span{color:#71809a;font-size:11px}.console-app .rail nav button{font-size:13px}.console-app .table-bottom{font-size:11px}.console-drawer .field-help,.console-dialog .field-help{color:#7f8ba0}
+
+.registration-params{display:flex;flex-direction:column;gap:6px;font-size:12px;color:#68778f;overflow-wrap:anywhere}.registration-params b{font-family:monospace;color:#455cd0;margin-right:6px}.registration-params code{font-size:12px}

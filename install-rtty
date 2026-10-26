@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+export LC_ALL=C
+umask 077
+usage() {
+  cat <<'HELP'
+Usage: sudo ./install-rtty --id DEVICE_ID [options]
+  --host HOST          Server (default 172.21.30.204)
+  --port PORT          TLS device port (default 19512)
+  --user USER          Terminal OS user (default nvidia)
+  --description TEXT   Registration description (-D)
+  --token-file FILE    Read the device token from a private file
+                       Otherwise prompt with input hidden (never pass token in argv).
+  --check              Validate inputs and bundle without changing the service
+  --help
+
+Run from the extracted package containing bin/, cert.pem and SHA256SUMS.
+Enroll the device in the console first. TLS verification is always enabled.
+Only rtty-tenant-poc is managed; unrelated rtty installations are preserved.
+HELP
+}
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+bundle=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+device_id= host=172.21.30.204 port=19512 login_user=nvidia description= token_file= check_only=false
+while (($#)); do
+  case "$1" in
+    --help|-h) usage; exit 0;;
+    --check) check_only=true; shift;;
+    --id|--host|--port|--user|--description|--token-file)
+      (($#>=2)) || die "Missing value for $1"
+      case "$1" in
+        --id) device_id=$2;; --host) host=$2;; --port) port=$2;;
+        --user) login_user=$2;; --description) description=$2;; --token-file) token_file=$2;;
+      esac; shift 2;;
+    *) die "Unknown option: $1";;
+  esac
+done
+[[ $(uname -s) == Linux ]] || die 'Linux is required'
+[[ $EUID == 0 ]] || die 'Run with sudo/root'
+for cmd in systemctl journalctl sha256sum install mktemp stat sed cp grep id; do command -v "$cmd" >/dev/null || die "Missing command: $cmd"; done
+[[ -d /run/systemd/system ]] || die 'systemd must be running'
+[[ $device_id =~ ^[A-Za-z0-9._-]{1,32}$ ]] || die 'Device ID must be 1-32 ASCII letters, digits, dots, underscores or hyphens'
+[[ $host =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || die 'Host must be IPv4 or DNS name'
+[[ $port =~ ^[0-9]{1,5}$ ]] && ((10#$port>=1 && 10#$port<=65535)) || die 'Invalid port'
+port=$((10#$port))
+[[ $login_user =~ ^[a-zA-Z_][a-zA-Z0-9_-]*\$?$ ]] || die 'Invalid OS username'
+id "$login_user" >/dev/null 2>&1 || die 'OS user does not exist'
+[[ ${#description} -le 126 && $description != *$'\n'* && $description != *$'\r'* ]] || die 'Description must be one line, at most 126 bytes'
+case $(uname -m) in aarch64|arm64) arch=arm64;; x86_64|amd64) arch=amd64;; *) die 'Only ARM64 and x86_64 are supported';; esac
+[[ -f $bundle/SHA256SUMS && -f $bundle/cert.pem && -f $bundle/bin/rtty-linux-$arch ]] || die 'Extract the complete installation package first'
+(cd "$bundle" && sha256sum --status -c SHA256SUMS) || die 'Package checksum verification failed'
+base=/opt/rtty-tenant-poc
+helper=/usr/local/bin/rtty-tenant-poc
+unit=/etc/systemd/system/rtty-tenant-poc.service
+service=rtty-tenant-poc.service
+existing=false
+if [[ -e $base || -e $helper || -e $unit ]]; then
+  [[ -d $base && ! -L $base && -f $base/rtty.conf && -f $helper && -f $unit ]] || die 'Partial or foreign installation exists; refusing to overwrite'
+  grep -Fxq 'ExecStart=/opt/rtty-tenant-poc/rtty --conf /opt/rtty-tenant-poc/rtty.conf' "$unit" || die 'Existing service is not managed by this installer'
+  existing=true
+fi
+if [[ -n $token_file ]]; then
+  [[ -f $token_file && -r $token_file ]] || die 'Token file is not readable'
+  mode=$(stat -c '%a' "$token_file")
+  (( (8#$mode & 077) == 0 )) || die 'Token file must not be readable by group/others (use chmod 600)'
+  token=$(<"$token_file")
+else
+  [[ -t 0 ]] || die 'Non-interactive use requires --token-file'
+  read -r -s -p 'Device Token: ' token
+  printf '\n'
+fi
+[[ $token =~ ^[a-f0-9]{64}$ ]] || die 'Expected a 64-character token issued by ja-rttys'
+if $check_only; then printf 'Preflight passed: %s -> %s:%s (%s). No changes.\n' "$device_id" "$host" "$port" "$arch"; exit 0; fi
+backup= was_active=false was_enabled=false
+if $existing; then
+  systemctl is-active --quiet "$service" && was_active=true
+  systemctl is-enabled --quiet "$service" && was_enabled=true
+  install -d -m 0700 /opt/rtty-tenant-backups
+  backup=$(mktemp -d /opt/rtty-tenant-backups/install.XXXXXX)
+  cp -a "$base" "$backup/client"
+  cp -a "$helper" "$backup/helper"
+  cp -a "$unit" "$backup/service"
+fi
+stage=$(mktemp -d /opt/.install-rtty.XXXXXX)
+cleanup() { rm -rf -- "$stage"; }
+trap cleanup EXIT
+yaml_string() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
+install -m 0755 "$bundle/bin/rtty-linux-$arch" "$stage/rtty"
+install -m 0644 "$bundle/cert.pem" "$stage/cert.pem"
+{
+  printf 'id: '; yaml_string "$device_id"; printf '\nhost: '; yaml_string "$host"
+  printf '\nport: %s\nssl: true\ncacert: /opt/rtty-tenant-poc/cert.pem\nreconnect: true\nheartbeat: 5\nusername: ' "$port"
+  yaml_string "$login_user"; printf '\ndescription: '; yaml_string "$description"
+  printf '\ntoken: '; yaml_string "$token"; printf '\n'
+} > "$stage/rtty.conf"
+unset token
+cat > "$stage/service" <<'UNIT'
+[Unit]
+Description=JA RTTY authenticated device client
+After=network-online.target
+Wants=network-online.target
+[Service]
+WorkingDirectory=/opt/rtty-tenant-poc
+ExecStart=/opt/rtty-tenant-poc/rtty --conf /opt/rtty-tenant-poc/rtty.conf
+Restart=on-failure
+RestartSec=5
+UMask=0077
+[Install]
+WantedBy=multi-user.target
+UNIT
+rollback() {
+  trap - ERR; set +e
+  recovery_failed=false
+  systemctl stop "$service" || recovery_failed=true
+  if $existing; then
+    cp -a "$backup/client/." "$base/" || recovery_failed=true
+    cp -a "$backup/helper" "$helper" || recovery_failed=true
+    cp -a "$backup/service" "$unit" || recovery_failed=true
+    systemctl daemon-reload || recovery_failed=true
+    if $was_enabled; then systemctl enable "$service" || recovery_failed=true; else systemctl disable "$service" || recovery_failed=true; fi
+    if $was_active; then systemctl start "$service" || recovery_failed=true; systemctl is-active --quiet "$service" || recovery_failed=true; fi
+  else
+    systemctl disable "$service" || recovery_failed=true
+    rm -f -- "$unit" "$helper" || recovery_failed=true
+    rm -rf -- "$base" || recovery_failed=true
+    systemctl daemon-reload || recovery_failed=true
+  fi
+  if $recovery_failed; then
+    printf 'Installation failed; RECOVERY INCOMPLETE. Restore manually from: %s\n' "${backup:-none}" >&2
+  else
+    printf 'Installation failed; previous files and service state restored. Backup: %s\n' "${backup:-none}" >&2
+  fi
+  exit 1
+}
+trap rollback ERR
+if $existing; then systemctl stop "$service"; fi
+install -d -m 0700 "$base"
+install -m 0755 "$stage/rtty" "$base/rtty"
+install -m 0755 "$stage/rtty" "$helper"
+install -m 0644 "$stage/cert.pem" "$base/cert.pem"
+install -m 0600 "$stage/rtty.conf" "$base/rtty.conf"
+install -m 0644 "$stage/service" "$unit"
+systemctl daemon-reload
+systemctl enable --now "$service"
+sleep 2
+systemctl is-active --quiet "$service"
+registered=false
+for attempt in {1..15}; do
+  invocation=$(systemctl show "$service" -p InvocationID --value)
+  if [[ $invocation =~ ^[a-f0-9]{32}$ ]] && journalctl --no-pager -n 100 -o cat "_SYSTEMD_INVOCATION_ID=$invocation" | grep -Fq 'registered successfully'; then registered=true; break; fi
+  sleep 2
+done
+if ! $registered; then printf 'Device registration was not confirmed within 30 seconds.\n' >&2; false; fi
+trap - ERR
+printf 'Installed %s -> %s:%s; service active, enabled and registration confirmed.\n' "$device_id" "$host" "$port"
+printf 'Registration confirmed by the current service invocation; verify terminal access in the console.\n'
+printf 'File helper: %s -R (receive), %s -S FILE (send)\n' "$helper" "$helper"
+[[ -z $backup ]] || printf 'Rollback files: %s\n' "$backup"

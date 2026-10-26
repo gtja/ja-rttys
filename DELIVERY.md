@@ -14,3 +14,6 @@ Rollback: stop only rttys-tenant-poc server/client services, retain data and bin
 
 ## Multi-group increment
 User requests independent group CRUD, multi-group membership within one tenant and union authorization. Failure modes: lost legacy membership/grants; foreign-tenant group or device mutation; duplicate/invalid names; partial membership replacement; rename losing grants; deletion resurrecting grants; revoking one grant disconnecting a still-authorized session; removing last group/direct grant leaving terminal/file/proxy open; restart restoring deleted membership. E2E extends the existing real-server socket oracle before implementation. Test deployment only on 204 with 156; stopped-database plus binary backup is required for rollback.
+
+## Device lifecycle increment
+Failures to expose before implementation: wrong/absent confirmation rotates a token; old token reconnects after reset; cross-tenant deletion; deletion leaves live sessions or enables reconnect; tombstoned devices reappear in inventory/groups/grants; client -D confused with administrator name or lost across restart; search omits registration -I/-D. Preserve deleted identifiers and audit history; no implicit restore. Installer must retain TLS and existing unrelated rtty services.

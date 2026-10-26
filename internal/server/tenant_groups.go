@@ -107,7 +107,7 @@ func (a *TenantAuth) manageGroups(c *gin.Context) {
 		id := c.Param("id")
 		resource = id
 		var tenant string
-		if tx.QueryRow("SELECT tenant FROM devices WHERE id=?", id).Scan(&tenant) != nil || tenant != p.Tenant {
+		if tx.QueryRow("SELECT tenant FROM devices WHERE id=? AND deleted_at=0", id).Scan(&tenant) != nil || tenant != p.Tenant {
 			c.Status(404)
 			return
 		}

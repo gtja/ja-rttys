@@ -1,11 +1,12 @@
 plane_work_item: local-rttys-tenant
-slice: RTTY console information architecture and visual redesign
+slice: device soft deletion, confirmed credential reset, registration metadata and
+  client installer
 lane: high-risk
 base_branch: master
 claim:
   kind: integration_health
-  statement: Readable role-aware console navigation, focused device operations and
-    preserved management workflows
+  statement: Deleted devices cannot reconnect, reset invalidates old tokens, actual
+    registration identity is visible and searchable, installer verifies registration
   intent_ref: user-request-this-chat
   does_not_prove:
   - production readiness
@@ -71,6 +72,7 @@ allowed_paths:
 - .gitignore
 - README-TENANT.md
 - THIRD_PARTY.md
+- install-rtty
 non_goals:
 - production cutover
 - SSO
@@ -82,21 +84,26 @@ invariants:
 - existing edge-manager edits and other remote services are untouched
 - no secrets are committed
 acceptance:
-- id: UI-1
-  given: tenant admin on desktop
-  when: open workspace and navigate sections
-  then: light console has clear navigation, device metrics, focused tables and separate
-    groups members access audit sections
-- id: UI-2
-  given: current device groups and members
-  when: open group settings and browse management
-  then: existing selection, save/cancel, enrollment and membership controls remain
-    available without changing authorization APIs
-- id: UI-3
-  given: operator and login page
-  when: sign in and open console
-  then: login is readable, restricted management navigation stays hidden and device
-    actions remain available
+- id: LIFE-1
+  given: tenant-scoped enrolled device
+  when: administrator soft-deletes it
+  then: device disappears, all access closes, credential fails and audit tombstone
+    persists
+- id: LIFE-2
+  given: device credential and established connection
+  when: administrator confirms reset twice and provides exact device identity
+  then: old credential is rejected, new credential registers, token and audit change
+    atomically
+- id: LIFE-3
+  given: a client registers with identity and description
+  when: list or search devices, disconnect or restart server
+  then: actual registration id and description persist and remain searchable independently
+    from admin name
+- id: INSTALL-1
+  given: ARM64 NVIDIA174 and complete checked installation bundle
+  when: install with correct credential and exercise a failed update
+  then: TLS registration and terminal/file roundtrip succeed; invalid update restores
+    previous files/service
 proof:
   evidence_tier: deployment-real
   acceptance_owner: user
@@ -104,8 +111,8 @@ proof:
   commands:
   - python3 scripts/run-local-e2e.py
   - deployed real-device acceptance
-rollback: Stop service; restore matched pre-groups binary and stopped SQLite database.
-  Binary-only rollback is not valid after migration.
+rollback: Restore matched pre-lifecycle binary and stopped SQLite backup on204; installer
+  restores client files/unit on174. No production deployment.
 open_questions: []
 execution:
   environments:

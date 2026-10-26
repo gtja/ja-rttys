@@ -88,3 +88,11 @@ Replay: build cmd/tenant-e2e as /tmp/rttys-groups-check and the new server as /t
 ## Console redesign
 
 The console now uses four task-focused areas: Devices (status/search/pagination, terminal/Web, per-row management menu), Groups (group list with device membership detail), Members and Permissions (select a member to inspect or edit grants), and Activity (searchable paginated recent records). Platform admins additionally see Tenants and Accounts. Enrollment, account creation and authorization use labeled drawers. Device group membership remains a visible checkbox dialog. Tenant API and backend authorization are unchanged.
+
+## Device lifecycle (tenant.3)
+
+Device menu offers soft deletion and Token reset. Soft deletion keeps a tombstone/audit and reserves the device number, removes grants/group membership, hides the record, and rejects all reconnects; no restore/reuse workflow is provided. Token reset has two UI confirmations (the second requires typing the device number); POST /api/manage/devices/:id/rotate now requires {confirm_wire_id: wire_id}. Token and audit update in one transaction; old token is invalidated and active connections closed.
+
+Device list shows registration -I and -D separately from administrator display name. client_description and last_registered_at persist the last authenticated registration, including an empty description. q filters device list by ID, admin name, client description and group. The stock rtty-go client spells description as --description/-d, corresponding to the legacy C client's -D. The installer uses --description.
+
+Use the packaged install-rtty with its bin/, cert.pem and SHA256SUMS. It accepts --id, --description, --host, --port, --user and --token-file (or hidden prompt); --check validates without changing services. It manages only rtty-tenant-poc, checks current-invocation registration logs, saves private backups on upgrade and reports incomplete recovery explicitly. No server admin password belongs on a client.
