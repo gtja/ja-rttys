@@ -17,3 +17,6 @@ User requests independent group CRUD, multi-group membership within one tenant a
 
 ## Device lifecycle increment
 Failures to expose before implementation: wrong/absent confirmation rotates a token; old token reconnects after reset; cross-tenant deletion; deletion leaves live sessions or enables reconnect; tombstoned devices reappear in inventory/groups/grants; client -D confused with administrator name or lost across restart; search omits registration -I/-D. Preserve deleted identifiers and audit history; no implicit restore. Installer must retain TLS and existing unrelated rtty services.
+
+## Download-window failure modes
+Test before implementation: unsupported negotiation; more than16 unacknowledged chunks; stale ACK/cancel affecting subsequent file; cancellation aborting the terminal or leaving helper blocked; disconnected download leaving the next session unable to transfer; partial files accepted as success. Preserve ordinary transfer integrity and the existing device protocol. Evidence distinguishes local simulated transport from deployed174 file checks.

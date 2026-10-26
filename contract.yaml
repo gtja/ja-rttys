@@ -1,12 +1,11 @@
 plane_work_item: local-rttys-tenant
-slice: device soft deletion, confirmed credential reset, registration metadata and
-  client installer
+slice: bounded download window with cancellation and transfer isolation
 lane: high-risk
 base_branch: master
 claim:
   kind: integration_health
-  statement: Deleted devices cannot reconnect, reset invalidates old tokens, actual
-    registration identity is visible and searchable, installer verifies registration
+  statement: Windowed downloads preserve file integrity across cancel, sequential
+    files and reconnect
   intent_ref: user-request-this-chat
   does_not_prove:
   - production readiness
@@ -84,26 +83,21 @@ invariants:
 - existing edge-manager edits and other remote services are untouched
 - no secrets are committed
 acceptance:
-- id: LIFE-1
-  given: tenant-scoped enrolled device
-  when: administrator soft-deletes it
-  then: device disappears, all access closes, credential fails and audit tombstone
-    persists
-- id: LIFE-2
-  given: device credential and established connection
-  when: administrator confirms reset twice and provides exact device identity
-  then: old credential is rejected, new credential registers, token and audit change
-    atomically
-- id: LIFE-3
-  given: a client registers with identity and description
-  when: list or search devices, disconnect or restart server
-  then: actual registration id and description persist and remain searchable independently
-    from admin name
-- id: INSTALL-1
-  given: ARM64 NVIDIA174 and complete checked installation bundle
-  when: install with correct credential and exercise a failed update
-  then: TLS registration and terminal/file roundtrip succeed; invalid update restores
-    previous files/service
+- id: DL-1
+  given: new browser terminal and existing device client
+  when: negotiate a16-block download window
+  then: at most16 unconsumed chunks and exactly one device ACK in flight; ordinary
+    payload integrity preserved
+- id: DL-2
+  given: active and sequential downloads
+  when: cancel, deliver stale ACK/cancel or disconnect and reconnect
+  then: next file is isolated, terminal remains usable after cancel, reconnected session
+    downloads intact
+- id: DL-3
+  given: 204 server and174 real device
+  when: run8MiB transfers with the new protocol
+  then: speed and integrity are recorded; cancel, repeated files, reconnect and cleanup
+    pass
 proof:
   evidence_tier: deployment-real
   acceptance_owner: user
@@ -111,8 +105,8 @@ proof:
   commands:
   - python3 scripts/run-local-e2e.py
   - deployed real-device acceptance
-rollback: Restore matched pre-lifecycle binary and stopped SQLite backup on204; installer
-  restores client files/unit on174. No production deployment.
+rollback: Restore pre-window server binary and restart only rttys-tenant-poc on204;
+  database and client protocol unchanged.
 open_questions: []
 execution:
   environments:

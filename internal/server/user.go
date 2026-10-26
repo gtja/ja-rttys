@@ -25,14 +25,16 @@ import (
 )
 
 type User struct {
-	policy  *accessLease
-	conn    *websocket.Conn
-	sid     string
-	dev     *Device
-	pending chan byte
-	serial  bool
-	close   sync.Once
-	closed  atomic.Bool
+	fileMu   sync.Mutex
+	download downloadFlow
+	policy   *accessLease
+	conn     *websocket.Conn
+	sid      string
+	dev      *Device
+	pending  chan byte
+	serial   bool
+	close    sync.Once
+	closed   atomic.Bool
 }
 
 type devicePeer interface {
@@ -78,28 +80,18 @@ func (user *User) OnFile(data []byte) {
 	if len(data) == 0 {
 		return
 	}
-	switch data[0] {
-	case proto.MsgTypeFileSend:
-		user.WriteMsg(websocket.TextMessage,
-			fmt.Appendf(nil, `{"type":"sendfile", "name": "%s"}`, string(data[1:])))
-	case proto.MsgTypeFileRecv:
-		user.WriteMsg(websocket.TextMessage, []byte(`{"type":"recvfile"}`))
-	case proto.MsgTypeFileData:
-		user.WriteMsg(websocket.BinaryMessage, append([]byte{1}, data[1:]...))
-	case proto.MsgTypeFileAck:
-		user.WriteMsg(websocket.TextMessage, []byte(`{"type":"fileAck"}`))
-	case proto.MsgTypeFileAbort:
-		user.WriteMsg(websocket.BinaryMessage, []byte{1})
-	}
+	user.onFileWindow(data)
 }
 
 type UserMsg struct {
-	Type string `json:"type"`
-	Cols uint16 `json:"cols"`
-	Rows uint16 `json:"rows"`
-	Ack  uint16 `json:"ack"`
-	Size uint32 `json:"size"`
-	Name string `json:"name"`
+	Type       string `json:"type"`
+	TransferID string `json:"transfer_id"`
+	Window     int    `json:"window"`
+	Cols       uint16 `json:"cols"`
+	Rows       uint16 `json:"rows"`
+	Ack        uint16 `json:"ack"`
+	Size       uint32 `json:"size"`
+	Name       string `json:"name"`
 }
 
 const (
@@ -356,14 +348,9 @@ func (user *User) handleMsg() {
 					err = dev.WriteMsg(proto.MsgTypeFile, sid, proto.MsgTypeFileInfo, msg.Size, msg.Name)
 				}
 
-			case "fileCanceled":
+			case "fileCanceled", "fileAck", "fileStart":
 				if !user.serial {
-					err = dev.WriteMsg(proto.MsgTypeFile, sid, proto.MsgTypeFileAbort)
-				}
-
-			case "fileAck":
-				if !user.serial {
-					err = dev.WriteMsg(proto.MsgTypeFile, sid, proto.MsgTypeFileAck)
+					err = user.fileControl(msg)
 				}
 			}
 		}

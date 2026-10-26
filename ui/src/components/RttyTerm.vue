@@ -13,6 +13,7 @@
         <el-button type="primary" @click="doUploadFile">{{ $t('OK') }}</el-button>
       </template>
     </el-dialog>
+    <div v-if="fileCtx.downloading" class="download-status" role="status"><span>{{fileCtx.name}} · {{(fileCtx.received / 1048576).toFixed(1)}} MiB</span><el-button size="small" @click="cancelDownload">取消下载</el-button></div>
     <transition name="find-box">
       <div v-if="showFindBox" class="find-box" @keydown="onFindBoxKeydown">
         <el-input ref="findInput" class="find-input" v-model="findText" :placeholder="$t('Find')" clearable @keydown.enter="doFind('next')"/>
@@ -123,6 +124,8 @@ const fileCtx = reactive({
   file: null,
   downloading: false,
   name: '',
+  transferID: '',
+  received: 0,
   chunks: []
 })
 
@@ -259,7 +262,15 @@ const resetFileTransfer = () => {
   fileCtx.file = null
   fileCtx.downloading = false
   fileCtx.name = ''
+  fileCtx.transferID = ''
+  fileCtx.received = 0
   fileCtx.chunks = []
+}
+
+const cancelDownload = () => {
+  const transferID = fileCtx.transferID
+  resetFileTransfer()
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({type:'fileCanceled',transfer_id:transferID}))
 }
 
 const onUploadDialogClosed = () => {
@@ -538,8 +549,11 @@ const connect = () => {
         resetFileTransfer()
         fileCtx.downloading = true
         fileCtx.name = msg.name
-
-        socket.send(JSON.stringify({type: 'fileAck'}))
+        fileCtx.transferID = msg.transfer_id || ''
+        if (fileCtx.transferID) socket.send(JSON.stringify({type:'fileStart',transfer_id:fileCtx.transferID,window:Math.min(16,msg.max_window || 1)}))
+        else socket.send(JSON.stringify({type: 'fileAck'}))
+      } else if (msg.type === 'fileError') {
+        if (fileCtx.transferID === msg.transfer_id) { resetFileTransfer(); ElMessage.error('文件下载已中断') }
       } else if (msg.type === 'recvfile') {
         resetFileTransfer()
         fileCtx.modal = true
@@ -586,7 +600,8 @@ const connect = () => {
           }, 100)
         } else {
           fileCtx.chunks.push(data.slice(1))
-          ws.send(JSON.stringify({type: 'fileAck'}))
+          fileCtx.received += data.length - 1
+          ws.send(JSON.stringify({type: 'fileAck',transfer_id:fileCtx.transferID}))
         }
       }
     }
@@ -612,6 +627,8 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.download-status{position:absolute;top:12px;right:18px;z-index:20;display:flex;gap:16px;align-items:center;max-width:calc(100% - 36px);padding:10px 14px;border:1px solid #414957;border-radius:8px;background:#202734;color:#e4eaf3;font-size:12px}.download-status span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
   .terminal-container {
     height: 100%;
     position: relative;

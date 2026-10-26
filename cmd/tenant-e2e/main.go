@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -124,6 +125,7 @@ func run() {
 	cb, mb, code := register("same-device", f.DeviceB["token"], "")
 	check("same wire identity B device", code == 0, code)
 	defer cb.Close()
+	var downloadSent atomic.Int32
 	fake := func(conn net.Conn, m *proto.MsgReaderWriter) {
 		var mu sync.Mutex
 		write := func(t byte, d ...any) { mu.Lock(); defer mu.Unlock(); m.Write(t, d...) }
@@ -140,6 +142,8 @@ func run() {
 			}
 		}()
 		go func() {
+			fileIndex, fileTotal, fileNext := 0, 0, false
+			fileSID := ""
 			for {
 				typ, d, e := m.Read()
 				if e != nil {
@@ -149,8 +153,44 @@ func run() {
 				case proto.MsgTypeLogin:
 					write(proto.MsgTypeLogin, string(d[:32]), byte(0))
 				case proto.MsgTypeTermData:
+					if len(d) > 32 && strings.HasPrefix(string(d[32:]), "__window_") {
+						fileSID = string(d[:32])
+						fileIndex = 0
+						fileTotal = 40
+						fileNext = false
+						downloadSent.Store(0)
+						if strings.Contains(string(d[32:]), "small") || strings.Contains(string(d[32:]), "pair") {
+							fileTotal = 2
+						}
+						fileNext = strings.Contains(string(d[32:]), "pair")
+						write(proto.MsgTypeFile, fileSID, proto.MsgTypeFileSend, []byte("window.bin"))
+						continue
+					}
 					write(proto.MsgTypeTermData, d)
 				case proto.MsgTypeFile:
+					if len(d) > 32 && string(d[:32]) == fileSID {
+						if d[32] == proto.MsgTypeFileAbort {
+							fileSID = ""
+							continue
+						}
+						if d[32] == proto.MsgTypeFileAck {
+							if fileIndex < fileTotal {
+								fileIndex++
+								downloadSent.Add(1)
+								write(proto.MsgTypeFile, fileSID, proto.MsgTypeFileData, bytes.Repeat([]byte{byte(fileIndex)}, 16))
+							} else {
+								write(proto.MsgTypeFile, fileSID, proto.MsgTypeFileData)
+								if fileNext {
+									fileNext = false
+									fileIndex = 0
+									write(proto.MsgTypeFile, fileSID, proto.MsgTypeFileSend, []byte("next.bin"))
+								} else {
+									fileSID = ""
+								}
+							}
+							continue
+						}
+					}
 					write(proto.MsgTypeFile, d)
 				case proto.MsgTypeHttp:
 					if len(d) > 25 && bytes.Contains(d[25:], []byte("HTTP/1.1")) {
@@ -201,6 +241,82 @@ func run() {
 	ws.WriteMessage(websocket.BinaryMessage, []byte{1, proto.MsgTypeFileData, 7, 8, 9})
 	_, data, e = ws.ReadMessage()
 	check("file channel roundtrip", e == nil && bytes.Equal(data, []byte{1, 7, 8, 9}), data)
+	// Bounded download window and transfer-ID lifecycle, over real WebSocket/TLS.
+	startFile := func(w *websocket.Conn, command string) string {
+		w.WriteMessage(websocket.BinaryMessage, append([]byte{0}, []byte(command)...))
+		w.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, msg, err := w.ReadMessage()
+		if err != nil {
+			panic(err)
+		}
+		var meta map[string]any
+		json.Unmarshal(msg, &meta)
+		id, _ := meta["transfer_id"].(string)
+		check("download has transfer identity", meta["type"] == "sendfile" && id != "", meta)
+		return id
+	}
+	windowID := startFile(ws, "__window_large__")
+	ws.WriteJSON(map[string]any{"type": "fileStart", "transfer_id": windowID, "window": 16})
+	for i := 0; i < 16; i++ {
+		_, chunk, err := ws.ReadMessage()
+		check("window ordered chunk", err == nil && bytes.Equal(chunk, append([]byte{1}, bytes.Repeat([]byte{byte(i + 1)}, 16)...)), i)
+	}
+	time.Sleep(100 * time.Millisecond)
+	check("download window bounded to16", downloadSent.Load() == 16, downloadSent.Load())
+	ws.WriteJSON(map[string]any{"type": "fileCanceled", "transfer_id": windowID})
+	ws.WriteMessage(websocket.BinaryMessage, []byte{0, 'C', 'A', 'N', 'C', 'E', 'L'})
+	_, data, e = ws.ReadMessage()
+	check("cancel preserves terminal", e == nil && bytes.Contains(data, []byte("CANCEL")), string(data))
+	pairID := startFile(ws, "__window_pair__")
+	for fileNo := 0; fileNo < 2; fileNo++ {
+		ws.WriteJSON(map[string]any{"type": "fileStart", "transfer_id": pairID, "window": 16})
+		for i := 0; i < 2; i++ {
+			_, chunk, err := ws.ReadMessage()
+			check("consecutive file intact", err == nil && bytes.Equal(chunk, append([]byte{1}, bytes.Repeat([]byte{byte(i + 1)}, 16)...)), i)
+			ws.WriteJSON(map[string]any{"type": "fileAck", "transfer_id": pairID})
+		}
+		_, chunk, err := ws.ReadMessage()
+		check("consecutive file EOF", err == nil && bytes.Equal(chunk, []byte{1}), chunk)
+		if fileNo == 0 {
+			_, msg, err := ws.ReadMessage()
+			if err != nil {
+				panic(err)
+			}
+			var meta map[string]any
+			json.Unmarshal(msg, &meta)
+			oldID := pairID
+			pairID, _ = meta["transfer_id"].(string)
+			check("next file has new identity", pairID != "" && pairID != oldID, pairID)
+			ws.WriteJSON(map[string]any{"type": "fileAck", "transfer_id": oldID})
+			ws.WriteJSON(map[string]any{"type": "fileCanceled", "transfer_id": oldID})
+		}
+	}
+	dropped, _, err := dial.Dial(wsURL, headers)
+	if err != nil {
+		panic(err)
+	}
+	dropped.SetReadDeadline(time.Now().Add(5 * time.Second))
+	dropped.ReadMessage()
+	dropID := startFile(dropped, "__window_large__")
+	dropped.WriteJSON(map[string]any{"type": "fileStart", "transfer_id": dropID, "window": 16})
+	dropped.ReadMessage()
+	dropped.Close()
+	reconnected, _, err := dial.Dial(wsURL, headers)
+	if err != nil {
+		panic(err)
+	}
+	defer reconnected.Close()
+	reconnected.SetReadDeadline(time.Now().Add(5 * time.Second))
+	reconnected.ReadMessage()
+	id := startFile(reconnected, "__window_small__")
+	reconnected.WriteJSON(map[string]any{"type": "fileStart", "transfer_id": id, "window": 16})
+	for i := 0; i < 2; i++ {
+		_, chunk, err := reconnected.ReadMessage()
+		check("reconnect download intact", err == nil && len(chunk) == 17, i)
+		reconnected.WriteJSON(map[string]any{"type": "fileAck", "transfer_id": id})
+	}
+	_, data, e = reconnected.ReadMessage()
+	check("reconnect EOF", e == nil && bytes.Equal(data, []byte{1}), data)
 	r := call(a, "GET", "/api/web/"+f.DeviceA["id"]+"/http/127.0.0.1:9999/", nil)
 	check("unlisted proxy target denied", r.StatusCode == 403, r.StatusCode)
 	r.Body.Close()
