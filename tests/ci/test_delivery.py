@@ -44,11 +44,11 @@ class DeliveryTest(unittest.TestCase):
         self.new.write_bytes(b'new-server')
         self.database = self.root / 'identity.db'
         with database_connection(self.database) as db:
-            db.executescript('PRAGMA user_version=2; CREATE TABLE proof(value TEXT); INSERT INTO proof VALUES ("original");')
+            db.executescript('PRAGMA user_version=3; CREATE TABLE proof(value TEXT); INSERT INTO proof VALUES ("original");')
         self.backup = self.root / 'backup'
         self.backup.mkdir()
         self.config = dict(binary=str(self.binary), database=str(self.database), service='test-only')
-        self.metadata = dict(binary_sha256=deploy.sha256(self.new), source_commit=COMMIT)
+        self.metadata = dict(binary_sha256=deploy.sha256(self.new), source_commit=COMMIT, identity_schema=3)
 
     def run_upgrade(self, readiness=None):
         with patch.object(deploy, 'check_running_files'), patch.object(deploy, 'health'), \
@@ -84,7 +84,7 @@ class DeliveryTest(unittest.TestCase):
 
     def test_unsupported_old_schema_restarts_unchanged_service(self):
         with database_connection(self.database) as db:
-            db.execute('PRAGMA user_version=1')
+            db.execute('PRAGMA user_version=2')
         result, ctl = self.run_upgrade()
         self.assertEqual((result['status'], result['rollback']), ('failed', 'passed'))
         self.assertEqual(self.binary.read_bytes(), b'old-server')
@@ -93,7 +93,7 @@ class DeliveryTest(unittest.TestCase):
     def test_unexpected_migration_blocks_unsafe_binary_downgrade(self):
         def readiness(config, digest):
             with database_connection(self.database) as db:
-                db.execute('PRAGMA user_version=3')
+                db.execute('PRAGMA user_version=4')
             raise RuntimeError('new binary changed schema')
 
         result, ctl = self.run_upgrade(readiness)
@@ -117,6 +117,7 @@ class DeliveryTest(unittest.TestCase):
             binary, metadata = deploy.unpack(archive, deploy.sha256(archive), COMMIT, stage)
         self.assertEqual(binary.read_bytes(), ELF_AMD64)
         self.assertEqual(metadata['source_commit'], COMMIT)
+        self.assertEqual(metadata['identity_schema'], 3)
         self.assertFalse(metadata['pushed'])
 
     def test_packaging_rejects_wrong_binary_architecture(self):

@@ -7,6 +7,8 @@ from pathlib import Path
 import sys
 import tarfile
 
+IDENTITY_SCHEMA = 3
+
 
 def sha256(path):
     with Path(path).open('rb') as stream:
@@ -23,7 +25,7 @@ def bundle(directory, version, commit, arch, image, image_id):
     if header[:6] != b'\x7fELF\x02\x01' or int.from_bytes(header[18:20], 'little') != {'amd64': 62, 'arm64': 183}.get(arch):
         raise ValueError('Binary ELF architecture does not match the selected target')
     metadata = dict(service='ja-rttys', version=version, source_commit=commit,
-                    architecture=arch, identity_schema=2, image=image,
+                    architecture=arch, identity_schema=IDENTITY_SCHEMA, image=image,
                     image_id=image_id, binary_sha256=sha256(directory / 'rttys'),
                     pushed=False)
     (directory / 'manifest.json').write_text(json.dumps(metadata, indent=2) + '\n')

@@ -8,8 +8,8 @@
 2026-10-26 已创建 [ja-rttys 多分支任务](http://172.21.30.114:3214/job/ja-rttys/)，
 修复分支的 [首轮构建 #1](http://172.21.30.114:3214/job/ja-rttys/job/codex%252Fsecurity-scan-20261024/1/) 成功。
 dev 开发环境目标为 **172.21.30.105**，与 204 上的租户功能测试实例分开。
-105 目前未发现 rttys 服务或容器；首次初始化开发实例后，流水线才可执行升级。
-本次没有部署或升级业务服务。
+105 已初始化独立的 `ja-rttys-dev` systemd 服务，使用专用非 root 账号和独立数据库；
+控制台为 `https://172.21.30.105:18446`，设备 TLS 端口为 `19512`。
 本地 Docker 和 Jenkins 实际节点验证结果见 [验证记录](verification.md)。
 
 ## 流程
@@ -70,10 +70,13 @@ master/test/release/PR 不部署。原 `DEPLOY_TEST` 参数已移除，流水线
 该入口仅更新已经初始化的 systemd 实例，不安装服务、不覆盖 unit/TLS/用户配置、不初始化新数据库。
 [deploy-dev.example.json](deploy-dev.example.json) 给出独立开发实例的建议布局：
 服务 `ja-rttys-dev`，目录 `/opt/ja-rttys-dev`，数据库 `/opt/ja-rttys-dev/data/identity.db`。
-这些是待初始化的配置示例，不代表 105 已有该服务或控制台可访问。
-运维先核对实际路径，将配置放在 105 的 `/etc/ja-rttys-dev/ci-deploy.json`，
+105 已按该布局初始化，实际部署配置位于 `/etc/ja-rttys-dev/ci-deploy.json`。
+其他新环境须先核对实际路径并初始化，将配置放在对应主机的该路径，
 root 所有、0600；备份目录 root 所有、0700。开发数据库与账号独立初始化。
 `console_url` 的证书必须由 `tls_ca` 信任并匹配主机名，不使用跳过 TLS 校验的方式。
+105 使用独立开发 CA，公钥证书在 `/etc/ja-rttys-dev/ca.pem`；浏览器及设备客户端需信任该 CA。
+初始管理员为 `admin`，密码已轮换，保存在 105 的 `/etc/ja-rttys-dev/initial-admin.json`（root、0600）；
+bootstrap 文件已删除。管理员凭据及 TLS 私钥不进入仓库或 Jenkins 归档。
 
 部署前校验包 SHA256、内层二进制 SHA256、源码提交、架构和 schema；
 核对 systemd MainPID 运行的是配置中的原二进制，并实际打开了指定数据库。
@@ -82,7 +85,8 @@ root 所有、0600；备份目录 root 所有、0700。开发数据库与账号�
 验证 `/proc/<MainPID>/exe` 的 SHA256、HTTPS 登录页面及未登录 `/api/me` 的 401 边界。
 
 验收失败会恢复旧二进制并重新验证，流水线仍报告失败；新产生的数据库写入不会被自动覆盖。
-初版仅支持 schema v2 → v2 升级。若新程序意外修改 schema，保持服务停止并报告回滚失败，
+仅支持数据库与包声明相同 schema 的升级，当前为 v3 → v3；端到端门禁会核对真实数据库版本与包声明。
+若新程序意外修改 schema，保持服务停止并报告回滚失败，
 由运维使用保存的数据库和旧二进制人工恢复，避免旧程序读写不兼容结构。
 备份和结果回执保留在目标机，数据库、密码和私钥不进入 Jenkins 归档。
 
@@ -102,5 +106,6 @@ SOURCE_COMMIT="$(git rev-parse HEAD)" PACKAGE_VERSION=local-check TARGET_ARCH=am
 构建与测试证据在 `out/`；Git 和 Docker 上下文均排除该目录。
 源代码审计与业务回归的已有结果见 [扫描整改说明](../README-TENANT.md#security-scan-remediation-2026-10-24)。
 Jenkins 服务端语法验证、105 实际节点检查和双架构镜像构建已通过；
-105 的 SSH 凭据与构建节点主机公钥校验已完成只读验证；registry 登录推送和 dev 远端升级尚未执行。
-启用部署前仍须独立初始化 105 开发服务及部署配置。
+105 的 SSH 凭据、构建节点主机公钥校验和独立实例初始化已完成。
+dev #2 实际推送双架构镜像成功，升级因旧脚本写死 schema v2 而被拦截，原服务恢复通过。
+修复后的流水线以真实 E2E 数据库版本核对包元数据；部署只接受数据库与安装包 schema 相同的升级。

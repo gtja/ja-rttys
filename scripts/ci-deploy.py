@@ -66,7 +66,8 @@ def unpack(archive, expected_sha, commit, destination):
             raise ValueError('Invalid package members')
         metadata = json.load(tar.extractfile(manifest))
         arch = {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(platform.machine())
-        if metadata.get('service') != 'ja-rttys' or metadata.get('source_commit') != commit or metadata.get('architecture') != arch or metadata.get('identity_schema') != 2:
+        identity_schema = metadata.get('identity_schema')
+        if metadata.get('service') != 'ja-rttys' or metadata.get('source_commit') != commit or metadata.get('architecture') != arch or type(identity_schema) is not int or identity_schema <= 0:
             raise ValueError('Package service/commit/architecture/schema mismatch')
         target = Path(destination) / 'rttys'
         with tar.extractfile(binary) as source, target.open('xb') as output:
@@ -130,6 +131,7 @@ def check_running_files(config, old_digest):
 
 def upgrade(config, binary, metadata, backup):
     target, database = Path(config['binary']), Path(config['database'])
+    expected_schema = metadata['identity_schema']
     old_info = target.stat()
     old_digest = sha256(target)
     check_running_files(config, old_digest)
@@ -143,8 +145,9 @@ def upgrade(config, binary, metadata, backup):
         systemctl('stop', config['service'])
         if int(systemctl('show', config['service'], '--property=MainPID', '--value')) != 0:
             raise RuntimeError('Service did not stop')
-        if schema(database) != 2:
-            raise RuntimeError('Only upgrades of the existing identity schema v2 are supported')
+        actual_schema = schema(database)
+        if actual_schema != expected_schema:
+            raise RuntimeError('Identity schema mismatch: running database v{}, package v{}; only same-schema upgrades are supported'.format(actual_schema, expected_schema))
         with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as source:
             with closing(sqlite3.connect(str(backup / 'identity.db'))) as destination:
                 source.backup(destination)
@@ -170,7 +173,7 @@ def upgrade(config, binary, metadata, backup):
             try:
                 systemctl('stop', config['service'])
                 # Never run an older binary against a changed schema or overwrite new user data.
-                if installed and schema(database) != 2:
+                if installed and schema(database) != expected_schema:
                     raise RuntimeError('Schema changed; leave stopped for manual recovery from backup')
                 with tempfile.NamedTemporaryFile(dir=target.parent, delete=False, prefix='.rttys-rollback-') as output:
                     restore = Path(output.name)

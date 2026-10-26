@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run a disposable real server and persist complete RED/GREEN evidence."""
-import pathlib,subprocess,os,time,tempfile,json,sys,socket,ssl,urllib.request,http.cookiejar,datetime
+import pathlib,subprocess,os,time,tempfile,json,sys,socket,ssl,urllib.request,http.cookiejar,datetime,sqlite3,contextlib
 root=pathlib.Path(tempfile.mkdtemp(prefix='rttys-e2e-'))
 pw='Local-test-only-Password!123';(root/'password').write_text(pw);(root/'password').chmod(0o600)
 subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(root/'key.pem'),'-out',str(root/'cert.pem'),'-days','1','-subj','/CN=localhost'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -66,6 +66,9 @@ except Exception as e:
  raise
 finally:
  server.terminate();server.wait(timeout=10)
+ if (root/'test.db').exists():
+  with contextlib.closing(sqlite3.connect((root/'test.db').as_uri()+'?mode=ro',uri=True)) as db:
+   result['identity_schema']=db.execute('PRAGMA user_version').fetchone()[0]
  result['finished_at']=datetime.datetime.now(datetime.timezone.utc).isoformat()
  (root/'run.json').write_text(json.dumps(result,indent=2));print(json.dumps(result,indent=2))
  if os.environ.get('RTTY_RUN_SUMMARY'):
