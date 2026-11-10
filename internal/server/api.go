@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"path"
 	"strings"
 	"time"
@@ -274,7 +275,7 @@ func (a *APIServer) handleConnect(c *gin.Context) {
 	if c.GetHeader("Upgrade") != "websocket" {
 		group := requestGroup(c)
 		devid := c.Param("devid")
-		if dev := a.srv.GetDevice(group, devid); dev == nil {
+		if dev := a.srv.GetDeviceLink(group, devid, c.Query("link")); dev == nil {
 			c.Redirect(http.StatusFound, "/error/offline")
 			return
 		}
@@ -285,6 +286,13 @@ func (a *APIServer) handleConnect(c *gin.Context) {
 			url += "?group=" + group
 		}
 
+		if link := c.Query("link"); link != "" {
+			separator := "?"
+			if group != "" {
+				separator = "&"
+			}
+			url += separator + "link=" + neturl.QueryEscape(link)
+		}
 		c.Redirect(http.StatusFound, url)
 	} else {
 		handleUserConnection(a.srv, c)
@@ -342,9 +350,10 @@ func (a *APIServer) handleDevs(c *gin.Context) {
 		devs = append(devs, &DeviceInfo{
 			Group:     dev.group,
 			ID:        dev.id,
+			Link:      dev.link,
 			Desc:      dev.desc,
 			Connected: uint32(time.Now().Unix() - dev.timestamp),
-			Uptime:    dev.uptime,
+			Uptime:    dev.uptime.Load(),
 			Proto:     dev.proto,
 			IPaddr:    dev.conn.RemoteAddr().(*net.TCPAddr).IP.String(),
 		})
@@ -362,15 +371,31 @@ func (a *APIServer) handleDev(c *gin.Context) {
 			c.Status(404)
 			return
 		}
-		c.JSON(200, d)
+		selected := a.srv.GetDeviceLink(d.Tenant, d.ID, c.Query("link"))
+		if c.Query("link") != "" && selected == nil {
+			c.Status(404)
+			return
+		}
+		link, clientID := "", ""
+		if selected != nil {
+			link = selected.link
+			clientID = selected.wireID
+		}
+		c.JSON(200, struct {
+			*TenantDevice
+			Link     string  `json:"link"`
+			Links    []gin.H `json:"links"`
+			ClientID string  `json:"client_id"`
+		}{d, link, a.srv.linkInfo(d.Tenant, d.ID), clientID})
 		return
 	}
-	if dev := a.srv.GetDevice(requestGroup(c), c.Param("devid")); dev != nil {
+	if dev := a.srv.GetDeviceLink(requestGroup(c), c.Param("devid"), c.Query("link")); dev != nil {
 		info := &DeviceInfo{
 			ID:        dev.id,
+			Link:      dev.link,
 			Desc:      dev.desc,
 			Connected: uint32(time.Now().Unix() - dev.timestamp),
-			Uptime:    dev.uptime,
+			Uptime:    dev.uptime.Load(),
 			Proto:     dev.proto,
 			IPaddr:    dev.conn.RemoteAddr().(*net.TCPAddr).IP.String(),
 		}
@@ -386,7 +411,7 @@ func (a *APIServer) handleSerialPorts(c *gin.Context) {
 		return
 	}
 
-	dev := a.srv.GetDevice(requestGroup(c), c.Param("devid"))
+	dev := a.srv.GetDeviceLink(requestGroup(c), c.Param("devid"), c.Query("link"))
 	if dev == nil {
 		c.Status(http.StatusNotFound)
 		return
@@ -423,7 +448,7 @@ func (a *APIServer) handleCmd(c *gin.Context) {
 		return
 	}
 
-	dev := a.srv.GetDevice(requestGroup(c), c.Param("devid"))
+	dev := a.srv.GetDeviceLink(requestGroup(c), c.Param("devid"), c.Query("link"))
 	if dev == nil {
 		cmdErrResp(c, rttyCmdErrOffline)
 		return

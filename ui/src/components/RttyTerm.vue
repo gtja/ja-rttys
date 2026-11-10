@@ -490,6 +490,7 @@ const connect = () => {
   const params = isSerial.value
     ? new URLSearchParams({ ...serialSettings, group, mode: 'serial' })
     : new URLSearchParams({ group })
+  if(route.query.link)params.set('link',String(route.query.link))
   const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://'
   const ws = new WebSocket(`${protocol}${location.host}/api/connect/${encodeURIComponent(props.devid)}?${params}`)
   ws.binaryType = 'arraybuffer'
@@ -528,9 +529,7 @@ const connect = () => {
 
     if (isSerial.value) return
 
-    let href = `/api/connect/${props.devid}`
-    if (group)
-      href += `?group=${group}`
+    const href = `/api/connect/${props.devid}?${params}`
     window.location.href = href
   })
 

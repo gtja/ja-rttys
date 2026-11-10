@@ -139,6 +139,14 @@ func (a *TenantAuth) middleware(c *gin.Context) {
 	}
 	c.Set("principal", p)
 	path := c.FullPath()
+	if feature := featureForPath(path); feature != "" && !a.featureAllowed(p.Tenant, feature) {
+		c.AbortWithStatusJSON(403, gin.H{"error": "当前租户未获此功能授权"})
+		return
+	}
+	if !validDeviceLink(c.Query("link")) {
+		c.AbortWithStatus(400)
+		return
+	}
 	if strings.Contains(path, "/cmd/") || strings.Contains(path, "/shares") || strings.Contains(path, "/serial-") || c.Query("mode") == "serial" {
 		c.AbortWithStatus(403)
 		return
@@ -184,6 +192,19 @@ func (a *TenantAuth) routes(r *gin.Engine) {
 	api := r.Group("/api", a.middleware)
 	api.GET("/alive", func(c *gin.Context) { c.Status(200) })
 	api.GET("/me", a.me)
+	api.GET("/devices/:id/overview", a.deviceOverview)
+	api.POST("/devices/:id/files", a.deviceFiles)
+	api.GET("/devices/:id/file-transfer", a.binaryFiles)
+	api.PUT("/manage/devices/:id/operations", a.configureOperations)
+	api.GET("/tasks", a.listTasks)
+	api.POST("/tasks", a.createTask)
+	api.GET("/ota", a.otaOverview)
+	api.POST("/ota/versions", a.otaCreateVersion)
+	api.POST("/ota/artifacts", a.otaImportArtifact)
+	api.DELETE("/ota/artifacts/:id", a.otaDeleteArtifact)
+	api.POST("/ota/deployments", a.otaDeploy)
+	api.GET("/ota/deployments/:id", a.otaJobStatus)
+	api.GET("/presence", a.presence)
 	api.POST("/password", a.changePassword)
 	api.POST("/signout", func(c *gin.Context) {
 		a.mu.Lock()
@@ -207,6 +228,7 @@ func (a *TenantAuth) routes(r *gin.Engine) {
 	api.GET("/manage/snapshot", a.snapshot)
 	api.POST("/manage/tenants", a.manage)
 	api.PATCH("/manage/tenants/:id", a.manage)
+	api.PUT("/manage/tenants/:id/features", a.manageTenantFeatures)
 	api.POST("/manage/users", a.manage)
 	api.PATCH("/manage/users/:id", a.manage)
 	api.PUT("/manage/members", a.manage)
@@ -220,6 +242,7 @@ func (a *TenantAuth) routes(r *gin.Engine) {
 	api.PATCH("/manage/groups/:name", a.manageGroups)
 	api.DELETE("/manage/groups/:name", a.manageGroups)
 	api.PUT("/manage/devices/:id/groups", a.manageGroups)
+	api.PUT("/manage/devices/:id/details", a.manageGroups)
 }
 func (a *TenantAuth) me(c *gin.Context) {
 	p := principal(c)
@@ -238,6 +261,9 @@ func (a *TenantAuth) me(c *gin.Context) {
 	}
 	defer rows.Close()
 	items := []gin.H{}
+	if p.Admin {
+		items = append(items, gin.H{"id": "", "name": "admin · 所有设备", "role": "admin", "all_devices": true})
+	}
 	for rows.Next() {
 		var id, name, role string
 		if rows.Scan(&id, &name, &role) != nil {
@@ -246,7 +272,13 @@ func (a *TenantAuth) me(c *gin.Context) {
 		}
 		items = append(items, gin.H{"id": id, "name": name, "role": role})
 	}
-	c.JSON(200, gin.H{"user": p, "tenants": items})
+	rows.Close()
+	features, err := a.featuresLocked(p.Tenant)
+	if err != nil {
+		c.Status(503)
+		return
+	}
+	c.JSON(200, gin.H{"user": p, "tenants": items, "features": features, "ota_backend_ready": a.otaReady(p.Tenant)})
 }
 func (a *TenantAuth) switchTenant(c *gin.Context) {
 	var in struct {
@@ -264,7 +296,7 @@ func (a *TenantAuth) switchTenant(c *gin.Context) {
 	}
 	var n int
 	a.db.QueryRow("SELECT count(*) FROM tenants WHERE id=? AND disabled=0", in.Tenant).Scan(&n)
-	if n != 1 {
+	if n != 1 && !(p.Admin && in.Tenant == "") {
 		c.Status(403)
 		return
 	}
@@ -296,7 +328,14 @@ func (a *TenantAuth) list(c *gin.Context, kind string) {
 		c.Status(401)
 		return
 	}
-	rows, err := a.db.Query("SELECT id FROM devices WHERE tenant=? AND disabled=0 AND deleted_at=0", p.Tenant)
+	allTenants := p.Admin && p.Tenant == ""
+	query := "SELECT id FROM devices WHERE tenant=? AND disabled=0 AND deleted_at=0"
+	args := []any{p.Tenant}
+	if allTenants {
+		query = "SELECT id FROM devices WHERE deleted_at=0 ORDER BY tenant,wire_id"
+		args = nil
+	}
+	rows, err := a.db.Query(query, args...)
 	if err != nil {
 		c.Status(503)
 		return
@@ -316,10 +355,15 @@ func (a *TenantAuth) list(c *gin.Context, kind string) {
 			c.Status(503)
 			return
 		}
-		if !a.allowedLocked(p, d, false) {
+		if !allTenants && !a.allowedLocked(p, d, false) {
 			continue
 		}
-		if q := strings.ToLower(strings.TrimSpace(c.Query("q"))); q != "" && !strings.Contains(strings.ToLower(d.WireID+" "+d.Name+" "+d.ClientDescription+" "+strings.Join(d.Groups, " ")), q) {
+		links := a.srv.linkInfo(d.Tenant, id)
+		clientIDs := ""
+		for _, link := range links {
+			clientIDs += " " + link["client_id"].(string)
+		}
+		if q := strings.ToLower(strings.TrimSpace(c.Query("q"))); q != "" && !strings.Contains(strings.ToLower(d.WireID+" "+d.Name+" "+d.ClientDescription+" "+strings.Join(d.Groups, " ")+clientIDs), q) {
 			continue
 		}
 		for _, g := range d.Groups {
@@ -328,12 +372,25 @@ func (a *TenantAuth) list(c *gin.Context, kind string) {
 		if kind == "devs" && c.Query("group") != "" && !deviceHasGroup(d, c.Query("group")) {
 			continue
 		}
-		info := gin.H{"id": id, "wire_id": d.WireID, "group": d.Group, "groups": d.Groups, "description": d.Name, "name": d.Name, "client_description": d.ClientDescription, "last_registered_at": d.LastRegisteredAt, "can_operate": a.allowedLocked(p, d, true), "online": false, "proto": 0, "connected": 0, "uptime": 0, "ipaddr": ""}
-		if dev := a.srv.GetDevice(p.Tenant, id); dev != nil {
+		info := gin.H{"id": id, "wire_id": d.WireID, "links": links, "client_id": "", "group": d.Group, "groups": d.Groups, "description": d.Name, "name": d.Name, "client_description": d.ClientDescription, "last_registered_at": d.LastRegisteredAt, "can_operate": a.allowedLocked(p, d, true), "online": false, "proto": 0, "connected": 0, "uptime": 0, "ipaddr": ""}
+		info["runtime"] = a.runtimeLocked(id)
+		if allTenants {
+			var name string
+			var disabled bool
+			if err := a.db.QueryRow("SELECT name,disabled FROM tenants WHERE id=?", d.Tenant).Scan(&name, &disabled); err != nil {
+				c.Status(503)
+				return
+			}
+			info["tenant_id"], info["tenant_name"] = d.Tenant, name
+			info["tenant_disabled"], info["disabled"] = disabled, d.Disabled || disabled
+		}
+		if dev := a.srv.GetDevice(d.Tenant, id); dev != nil {
 			info["online"] = true
+			info["selected_link"] = dev.link
+			info["client_id"] = dev.wireID
 			info["proto"] = dev.proto
 			info["connected"] = uint32(time.Now().Unix() - dev.timestamp)
-			info["uptime"] = dev.uptime
+			info["uptime"] = dev.uptime.Load()
 			info["ipaddr"] = dev.conn.RemoteAddr().String()
 		}
 		items = append(items, info)
@@ -384,7 +441,7 @@ func (a *TenantAuth) manage(c *gin.Context) {
 			return
 		}
 		if len(in.Password) < 12 || len(in.Password) > 72 {
-			c.Status(400)
+			c.JSON(400, gin.H{"error": "密码长度需为 12–72 字节；英文、数字和常用符号每个占 1 字节", "field": "password"})
 			return
 		}
 		select {
@@ -459,8 +516,8 @@ func (a *TenantAuth) manage(c *gin.Context) {
 		a.db.Exec("DELETE FROM sessions WHERE tenant=?", id)
 		a.disconnectTenantLocked(id)
 	case path == "/api/manage/users":
-		if !validName(in.Username) || len(in.Password) < 12 || len(in.Password) > 72 {
-			c.Status(400)
+		if !validName(in.Username) {
+			c.JSON(400, gin.H{"error": "用户名需为 1–128 字节，不能包含斜杠、反斜杠、换行或空字符", "field": "username"})
 			return
 		}
 		hash := passwordHash
@@ -619,9 +676,7 @@ func (a *TenantAuth) manage(c *gin.Context) {
 			return
 		}
 		a.revokeLocked("", d.Tenant, id)
-		if dev := a.srv.GetDevice(d.Tenant, id); dev != nil {
-			go dev.Close(a.srv)
-		}
+		a.srv.closeDeviceLinks(d.Tenant, id)
 	case path == "/api/manage/grants":
 		if p.Tenant == "" {
 			c.Status(400)
@@ -735,6 +790,15 @@ func (a *TenantAuth) snapshot(c *gin.Context) {
 		if e != nil {
 			c.Status(503)
 			return
+		}
+		for _, tenant := range v {
+			features, err := a.featuresLocked(tenant["id"].(string))
+			if err != nil {
+				c.Status(503)
+				return
+			}
+			tenant["features"] = features
+			tenant["ota_backend_ready"] = a.otaReady(tenant["id"].(string))
 		}
 		result["tenants"] = v
 	}

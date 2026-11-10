@@ -104,6 +104,11 @@ func (a *TenantAuth) manageGroups(c *gin.Context) {
 	name := c.Param("name")
 	resource := name
 	if c.Request.Method == "PUT" {
+		editing := c.FullPath() == "/api/manage/devices/:id/details"
+		if editing && (!validName(in.Name) || strings.TrimSpace(in.Name) != in.Name) {
+			c.Status(400)
+			return
+		}
 		id := c.Param("id")
 		resource = id
 		var tenant string
@@ -127,6 +132,9 @@ func (a *TenantAuth) manageGroups(c *gin.Context) {
 			if err == nil {
 				_, err = tx.Exec("INSERT OR IGNORE INTO device_groups(tenant,device,grp) VALUES(?,?,?)", p.Tenant, id, group)
 			}
+		}
+		if err == nil && editing {
+			_, err = tx.Exec("UPDATE devices SET name=? WHERE id=? AND tenant=?", in.Name, id, p.Tenant)
 		}
 	} else if c.Request.Method == "POST" {
 		if !validName(in.Name) || strings.TrimSpace(in.Name) != in.Name {

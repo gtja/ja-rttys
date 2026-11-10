@@ -21,6 +21,7 @@ import (
 )
 
 type CommandReq struct {
+	result chan json.RawMessage
 	cancel context.CancelFunc
 	acked  bool
 	c      *gin.Context
