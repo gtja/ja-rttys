@@ -1,11 +1,12 @@
 // Uses the Jenkins/105 conventions already used by ja-alarm-mqtt-kafka-bridge and defenseAI.
-// Publishing and the dev 105 systemd upgrade are opt-in; branch/PR builds verify only.
+// test publishes automatically; other trusted branches opt in. Deployment is manual.
 def buildPackages(boolean publish) {
     ['amd64', 'arm64'].each { arch ->
         withEnv(["TARGET_ARCH=${arch}", "PUSH_IMAGE=${publish ? '1' : '0'}"]) {
             sh 'bash ci-package.sh'
         }
     }
+    if (publish) { sh 'bash ci/publish-manifest.sh' }
 }
 
 pipeline {
@@ -20,7 +21,7 @@ pipeline {
     parameters {
         string(name: 'SCM_AGENT_LABEL', defaultValue: 'built-in', description: '114 源码检出节点，避免 105 直连 GitHub 不稳定')
         string(name: 'BUILD_AGENT_LABEL', defaultValue: 'ja-pipeline-builder-105', description: 'Linux amd64 节点；需要 Docker/Buildx、Bash、Python 3.8+，不需要宿主机 Go/Node')
-        booleanParam(name: 'PUBLISH_IMAGE', defaultValue: false, description: '验证后推送镜像；仅 master/dev/test/release，禁止 PR')
+        booleanParam(name: 'PUBLISH_IMAGE', defaultValue: false, description: 'test 自动发布；master/dev/release 可手动开启，禁止 PR')
         booleanParam(name: 'DEPLOY_DEV', defaultValue: false, description: '仅人工触发 dev，升级 105 独立开发实例；必须先初始化服务及 /etc/ja-rttys-dev/ci-deploy.json')
     }
     stages {
@@ -38,17 +39,36 @@ pipeline {
                         error('105 开发环境部署仅允许人工触发的 dev 构建')
                     }
                     env.SOURCE_COMMIT = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
-                    def baseVersion = sh(script: "sed -n 's/^const RttysVersion = \"\\(.*\\)\"/\\1/p' cmd/rttys/main.go", returnStdout: true).trim()
-                    if (!(baseVersion ==~ /[A-Za-z0-9_.-]+/)) { error('无效服务版本') }
-                    def date = sh(script: 'date -u +%y%m%d%H%M%S', returnStdout: true).trim()
-                    def branch = env.PIPELINE_BRANCH.replaceAll(/[^A-Za-z0-9_.-]/, '-').take(24)
-                    env.PACKAGE_VERSION = "${baseVersion}.${date}-${branch}-${env.SOURCE_COMMIT.take(12)}-${env.BUILD_NUMBER}"
                     env.CI_RUN_ID = "${env.JOB_NAME}-${env.BUILD_NUMBER}-${env.SOURCE_COMMIT}"
+                    env.PUBLISH_SELECTED = (!env.CHANGE_ID && (params.PUBLISH_IMAGE || env.PIPELINE_BRANCH == 'test')).toString()
                     def publicRegistry = env.PIPELINE_BRANCH in ['test', 'release']
-                    env.REGISTRY_HOST = publicRegistry ? 'registry.cn-hangzhou.aliyuncs.com' : 'registry.jingan.com:32008'
+                    env.REGISTRY_HOST = publicRegistry ? 'jingan-registry.cn-hangzhou.cr.aliyuncs.com' : 'registry.jingan.com:32008'
                     env.IMAGE_REGISTRY = "${env.REGISTRY_HOST}/${publicRegistry ? 'jingansi' : 'ja'}"
-                    env.REGISTRY_CREDENTIAL = publicRegistry ? 'public-aliyun-registry' : 'registry-jingan-com'
-                    currentBuild.displayName = "#${env.BUILD_NUMBER} ${env.PIPELINE_BRANCH} ${env.SOURCE_COMMIT.take(12)}"
+                    env.REGISTRY_CREDENTIAL = publicRegistry ? 'public-aliyun-registry-new' : 'registry-jingan-com'
+                    if (env.PUBLISH_SELECTED == 'true') {
+                        withCredentials([usernamePassword(credentialsId: 'github-pat', usernameVariable: 'SCM_USER', passwordVariable: 'SCM_PASSWORD')]) {
+                            env.PACKAGE_VERSION = sh(script: '''#!/usr/bin/env bash
+set -euo pipefail
+set +x
+umask 077
+askpass=$(mktemp)
+trap 'rm -f -- "$askpass"' EXIT
+cat > "$askpass" <<'ASKPASS'
+#!/bin/sh
+case "$1" in
+    *Username*) printf '%s\\n' "$SCM_USER" ;;
+    *Password*) printf '%s\\n' "$SCM_PASSWORD" ;;
+esac
+ASKPASS
+chmod 700 "$askpass"
+GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 python3 scripts/ci-version.py --reserve --commit "$SOURCE_COMMIT" --run-id "$CI_RUN_ID"
+''', returnStdout: true).trim()
+                        }
+                    } else {
+                        env.PACKAGE_VERSION = sh(script: 'python3 scripts/ci-version.py --commit "$SOURCE_COMMIT" --run-id "$CI_RUN_ID"', returnStdout: true).trim()
+                    }
+                    if (!(env.PACKAGE_VERSION ==~ /v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]{6}/)) { error('无效交付版本') }
+                    currentBuild.displayName = "#${env.BUILD_NUMBER} ${env.PACKAGE_VERSION} ${env.PIPELINE_BRANCH}"
                 }
                 sh '''#!/usr/bin/env bash
 set -euo pipefail
@@ -88,7 +108,7 @@ python3 -m unittest discover -s tests/ci -p 'test_*.py' -v
                 stage('Package amd64 and arm64') {
                     steps {
                         script {
-                            if (params.PUBLISH_IMAGE) {
+                            if (env.PUBLISH_SELECTED == 'true') {
                                 def dockerConfig = "${pwd(tmp: true)}/registry-${env.BUILD_NUMBER}"
                                 withEnv(["DOCKER_CONFIG=${dockerConfig}"]) {
                                     try {

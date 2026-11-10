@@ -11,8 +11,7 @@ IMAGE_REGISTRY=${IMAGE_REGISTRY:-registry.jingan.com:32008/ja}
 [[ "$PACKAGE_VERSION" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,110}$ ]]
 [[ "$TARGET_ARCH" == amd64 || "$TARGET_ARCH" == arm64 ]]
 [[ "$IMAGE_REGISTRY" =~ ^[a-zA-Z0-9.:/-]+$ && "$IMAGE_REGISTRY" != -* ]]
-tag=$PACKAGE_VERSION
-[[ "$TARGET_ARCH" != arm64 ]] || tag="$tag-arm"
+tag="$PACKAGE_VERSION-$TARGET_ARCH"
 image="$IMAGE_REGISTRY/ja-rttys:$tag"
 dir="out/release/$TARGET_ARCH"
 mkdir -p "$dir"
@@ -25,9 +24,11 @@ docker buildx build --builder "$RTTYS_BUILDER" --load --platform "linux/$TARGET_
     --build-arg "GO_BUILD_IMAGE=$GO_BUILD_IMAGE" \
     --build-arg "RUNTIME_IMAGE=$RUNTIME_IMAGE" \
     --build-arg "SOURCE_COMMIT=$SOURCE_COMMIT" \
+    --build-arg "PACKAGE_VERSION=$PACKAGE_VERSION" \
     --build-arg "BUILD_TIME=$(date -u +%FT%TZ)" -t "$image" .
 [[ "$(docker image inspect --format '{{.Architecture}}' "$image")" == "$TARGET_ARCH" ]]
 [[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" == "$SOURCE_COMMIT" ]]
+[[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")" == "$PACKAGE_VERSION" ]]
 container=$(docker create --platform "linux/$TARGET_ARCH" "$image")
 docker cp "$container:/usr/bin/rttys" "$dir/rttys"
 export TARGET_ARCH IMAGE_NAME="$image" RELEASE_DIR="$dir"

@@ -20,11 +20,10 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const RttysVersion = "5.6.0-tenant.4"
-
 var (
-	GitCommit = ""
-	BuildTime = ""
+	RttysVersion = "5.6.0-tenant.4"
+	GitCommit    = ""
+	BuildTime    = ""
 )
 
 func main() {

@@ -39,15 +39,18 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG SOURCE_COMMIT=unknown
 ARG BUILD_TIME=unknown
+ARG PACKAGE_VERSION=5.6.0
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     test -n "$TARGETOS" && test -n "$TARGETARCH" \
     && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w -X main.GitCommit=$SOURCE_COMMIT -X main.BuildTime=$BUILD_TIME" -o /rttys-bin ./cmd/rttys
+    go build -trimpath -ldflags="-s -w -X main.GitCommit=$SOURCE_COMMIT -X main.BuildTime=$BUILD_TIME -X main.RttysVersion=$PACKAGE_VERSION" -o /rttys-bin ./cmd/rttys
 
 FROM ${RUNTIME_IMAGE} AS runtime
 ARG SOURCE_COMMIT=unknown
+ARG PACKAGE_VERSION=5.6.0
 LABEL org.opencontainers.image.source="https://github.com/gtja/ja-rttys" \
-      org.opencontainers.image.revision=$SOURCE_COMMIT
+      org.opencontainers.image.revision=$SOURCE_COMMIT \
+      org.opencontainers.image.version=$PACKAGE_VERSION
 COPY --from=binary /rttys-bin /usr/bin/rttys
 WORKDIR /data
 VOLUME ["/data"]

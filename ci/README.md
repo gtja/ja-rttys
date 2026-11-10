@@ -4,7 +4,8 @@
 `ja-alarm-mqtt-kafka-bridge` 和 `defenseAI` Jenkins 实现，复用源码检出、凭据 ID、
 105 构建节点及版本追溯方式。本仓库保留单进程 SQLite、systemd 部署方式。
 
-默认每次构建只验证和出包，`PUBLISH_IMAGE=false`、`DEPLOY_DEV=false`。
+`test` 每次推送自动验证、双架构构建并发布到阿里云；其他分支默认只验证和出包，
+可通过 `PUBLISH_IMAGE` 显式发布。`DEPLOY_DEV=false`，部署仍需人工开启。
 2026-10-26 已创建 [ja-rttys 多分支任务](http://172.21.30.114:3214/job/ja-rttys/)，
 修复分支的 [首轮构建 #1](http://172.21.30.114:3214/job/ja-rttys/job/codex%252Fsecurity-scan-20261024/1/) 成功。
 dev 开发环境目标为 **172.21.30.105**，与 204 上的租户功能测试实例分开。
@@ -15,6 +16,7 @@ dev 开发环境目标为 **172.21.30.105**，与 204 上的租户功能测试�
 ## 流程
 
 1. 在 `SCM_AGENT_LABEL`（默认 `built-in`）检出 Jenkins 选定的精确提交。
+   节点需要 Git、Bash 和 Python 3.8+；发布构建通过 `github-pat` 创建只增不改的 Git 版本标签。
    用 `git archive` 生成源码快照及 SHA256，再传给 105，避免 105 直连 GitHub 的不稳定问题。
 2. 在 `BUILD_AGENT_LABEL`（默认既有的 `ja-pipeline-builder-105`）解包并核对快照。
    节点需要 Bash、Git/检出节点、Python 3.8+、Docker、Buildx 及 BuildKit；宿主机不需要安装 Go/Node。
@@ -26,18 +28,33 @@ dev 开发环境目标为 **172.21.30.105**，与 204 上的租户功能测试�
 4. 从同一提交交叉编译 Linux amd64、arm64，无需 QEMU；检查镜像架构、二进制 ELF 架构及源码 revision。
    出包包含二进制、示例配置、systemd unit、操作说明、manifest 和 SHA256。
    各架构 `image.json` 记录源码、二进制 SHA、镜像 ID；仅推送成功后记录 digest 和 `pushed=true`。
-5. 如显式启用 `PUBLISH_IMAGE`，使用临时 `DOCKER_CONFIG` 登录、推送，并在结束时删除登录信息。
+5. `test` 自动发布，其他可信分支如显式启用 `PUBLISH_IMAGE`，使用临时 `DOCKER_CONFIG` 登录、推送，
+   两个架构均成功后发布同版本多架构索引，并在结束时删除登录信息。
 6. 如人工在 `dev` 显式启用 `DEPLOY_DEV`，使用对应 amd64 包升级 105 上独立的开发实例。
 
-| 分支 | 检查与双架构出包 | 显式启用镜像推送时 | 部署 |
+| 分支 | 检查与双架构出包 | 镜像推送 | 部署 |
 | --- | --- | --- | --- |
-| dev | 是 | `registry.jingan.com:32008/ja/ja-rttys` | 仅人工启用后升级 105 开发实例 |
-| master | 是 | `registry.jingan.com:32008/ja/ja-rttys` | 禁用 |
-| test/release | 是 | `registry.cn-hangzhou.aliyuncs.com/jingansi/ja-rttys` | 禁用 |
+| dev | 是 | 显式开启：`registry.jingan.com:32008/ja/ja-rttys` | 仅人工启用后升级 105 开发实例 |
+| master | 是 | 显式开启：`registry.jingan.com:32008/ja/ja-rttys` | 禁用 |
+| test | 是 | 自动：`jingan-registry.cn-hangzhou.cr.aliyuncs.com/jingansi/ja-rttys` | 禁用 |
+| release | 是 | 显式开启：`jingan-registry.cn-hangzhou.cr.aliyuncs.com/jingansi/ja-rttys` | 禁用 |
 | 其他分支/PR | 是 | 禁用 | 禁用 |
 
-版本包含服务版本、UTC 时间、分支、源码 SHA 前 12 位和 Jenkins 构建号。
-arm64 镜像 tag 追加 `-arm`。这两个架构分别交付，不发布多架构 manifest 或 `latest`。
+交付版本统一为 `v大版本.小版本.修订号.YYMMDD`，日期按北京时间 `Asia/Shanghai`。
+[VERSION](../VERSION) 定义版本下限，初始为 `5.6.0`。例如当天第一次发布为 `v5.6.0.261110`，
+再次发布为 `v5.6.1.261110`，继续发布只递增修订号；次日沿用最高修订号，不重置。
+提升大版本、小版本或修订号下限时修改 VERSION。
+
+[ci-version.py](../scripts/ci-version.py) 在源码检出节点读取远端标签，原子创建带构建身份的
+annotated Git tag 预留发布版本。多个分支并行或同一提交重复发布也不会覆盖版本；
+标签冲突重新分配，认证或网络错误直接失败。预留发生在门禁前，失败构建的号码不回收，
+Git 标签本身不代表镜像已成功发布。只验证的构建根据已检出的标签生成预览版本，不创建标签。
+不得删除或强制覆盖这些版本标签。`out/source/version.json` 记录分配结果；
+源码 SHA、构建号和分支保留在 Jenkins 记录、镜像 OCI 标签及产物元数据中。
+
+规范版本 tag（例如 `ja-rttys:v5.6.0.261110`）是包含 `linux/amd64` 和 `linux/arm64` 的索引，
+Docker 按机器架构自动选择。单架构 tag 分别追加 `-amd64`、`-arm64`；
+安装包、`--version` 和镜像 `org.opencontainers.image.version` 使用同一规范版本。不发布 `latest`。
 GitHub Actions 上游示例仍保存在 `docs/upstream-workflows`，未启用。
 
 本机单独构建前端需 Node 22.13+。Vue I18n 及构建插件已更新至修复版本；
@@ -90,7 +107,7 @@ Buildx 元数据默认位于 `$HOME/.config/ja-rttys/buildx`，与镜像推送�
 
 导入 [jenkins-multibranch.xml](jenkins-multibranch.xml)，任务名称建议 `ja-rttys`。
 配置按每 5 分钟扫描，初始包含 `master dev test release codex/security-scan-20261024`；
-只有存在 Jenkinsfile 的分支会创建子任务。默认参数会执行验证和出包。
+只有存在 Jenkinsfile 的分支会创建子任务。默认参数在 test 会执行验证、出包和发布。
 上述任务已导入现有 114 Jenkins；安全修复和流水线现已合入基于最新 master 建立的 `dev`，
 master 分支未改动。推送 dev 后由多分支扫描创建对应构建任务。其他 Jenkins 安装可使用此 XML 接入。
 
@@ -98,9 +115,9 @@ master 分支未改动。推送 dev 后由多分支扫描创建对应构建任�
 
 | 凭据 ID | 类型 | 用途 |
 | --- | --- | --- |
-| `github-pat` | Username/password | GitHub Branch Source / HTTPS 检出 |
+| `github-pat` | Username/password | GitHub Branch Source / HTTPS 检出、发布版本标签预留 |
 | `registry-jingan-com` | Username/password | master/dev 私仓推送 |
-| `public-aliyun-registry` | Username/password | test/release 公仓推送 |
+| `public-aliyun-registry-new` | Username/password | test/release 指定阿里云实例推送 |
 | `ssh-105` | Username/password | 可选的独立 dev 实例升级；账号需有该主机的 root 权限 |
 
 需要 Pipeline、Git/GitHub Branch Source、Credentials Binding；启用部署时构建节点还需 OpenSSH 和 sshpass。
