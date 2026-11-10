@@ -1,0 +1,19 @@
+<?xml version="1.1" encoding="UTF-8"?>
+<slave>
+  <name>ja-rttys-builder-105</name>
+  <description>Dedicated ja-rttys CI executor on 105; internal image cache and Aliyun test publishing</description>
+  <remoteFS>/data1/wanghaoyang/ja-rttys-jenkins-agent</remoteFS>
+  <numExecutors>1</numExecutors>
+  <mode>EXCLUSIVE</mode>
+  <retentionStrategy class="hudson.slaves.RetentionStrategy$Always"/>
+  <launcher class="hudson.slaves.JNLPLauncher">
+    <workDirSettings>
+      <disabled>false</disabled>
+      <internalDir>remoting</internalDir>
+      <failIfWorkDirIsMissing>false</failIfWorkDirIsMissing>
+    </workDirSettings>
+    <webSocket>true</webSocket>
+  </launcher>
+  <label>ja-rttys-builder-105</label>
+  <nodeProperties/>
+</slave>

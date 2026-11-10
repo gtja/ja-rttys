@@ -1,0 +1,16 @@
+[Unit]
+Description=Jenkins dedicated ja-rttys build executor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ja-alarm-ci
+Group=ja-alarm-ci
+WorkingDirectory=/data1/wanghaoyang/ja-rttys-jenkins-agent
+ExecStart=/usr/bin/java -jar /data1/wanghaoyang/ja-rttys-jenkins-agent/agent.jar -url http://172.21.30.114:3214/ -secret @/data1/wanghaoyang/ja-rttys-jenkins-agent/secret -name ja-rttys-builder-105 -webSocket -workDir /data1/wanghaoyang/ja-rttys-jenkins-agent
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

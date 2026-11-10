@@ -20,7 +20,7 @@ pipeline {
     }
     parameters {
         string(name: 'SCM_AGENT_LABEL', defaultValue: 'built-in', description: '114 源码检出节点，避免 105 直连 GitHub 不稳定')
-        string(name: 'BUILD_AGENT_LABEL', defaultValue: 'ja-pipeline-builder-105', description: 'Linux amd64 节点；需要 Docker/Buildx、Bash、Python 3.8+，不需要宿主机 Go/Node')
+        string(name: 'BUILD_AGENT_LABEL', defaultValue: 'ja-rttys-builder-105', description: '105 项目专用执行器；需要 Docker/Buildx、Bash、Python 3.8+，不需要宿主机 Go/Node')
         booleanParam(name: 'PUBLISH_IMAGE', defaultValue: false, description: 'test 自动发布；master/dev/release 可手动开启，禁止 PR')
         booleanParam(name: 'DEPLOY_DEV', defaultValue: false, description: '仅人工触发 dev，升级 105 独立开发实例；必须先初始化服务及 /etc/ja-rttys-dev/ci-deploy.json')
     }

@@ -2,7 +2,7 @@
 
 流水线读取仓库根目录的 [Jenkinsfile](../Jenkinsfile)。参考已有的
 `ja-alarm-mqtt-kafka-bridge` 和 `defenseAI` Jenkins 实现，复用源码检出、凭据 ID、
-105 构建节点及版本追溯方式。本仓库保留单进程 SQLite、systemd 部署方式。
+105 构建主机及版本追溯方式。本仓库保留单进程 SQLite、systemd 部署方式。
 
 `test` 每次推送自动验证、双架构构建并发布到阿里云；其他分支默认只验证和出包，
 可通过 `PUBLISH_IMAGE` 显式发布。`DEPLOY_DEV=false`，部署仍需人工开启。
@@ -18,7 +18,7 @@ dev 开发环境目标为 **172.21.30.105**，与 204 上的租户功能测试�
 1. 在 `SCM_AGENT_LABEL`（默认 `built-in`）检出 Jenkins 选定的精确提交。
    检出节点只需要 Git、Bash 和 coreutils；发布构建通过 `github-pat` 创建只增不改的 Git 版本标签。
    用 `git archive` 生成源码快照及 SHA256，再传给 105，避免 105 直连 GitHub 的不稳定问题。
-2. 在 `BUILD_AGENT_LABEL`（默认既有的 `ja-pipeline-builder-105`）解包并核对快照。
+2. 在 `BUILD_AGENT_LABEL`（默认项目专用的 `ja-rttys-builder-105`）解包并核对快照。
    节点需要 Bash、Git/检出节点、Python 3.8+、Docker、Buildx 及 BuildKit；宿主机不需要安装 Go/Node。
    先检查内网基础镜像及工具版本，节点已有镜像时复用本地缓存。
 3. 运行交付和回滚测试，然后在临时构建镜像内完成 `npm ci`、前端构建、完整 npm 审计、
@@ -102,6 +102,12 @@ govulncheck v1.9.0。交叉编译 govulncheck，arm64 基础镜像构建无需 Q
 脚本使用 `--load` 将最终镜像导入本机 Docker，以保留镜像校验和二进制提取步骤。
 Buildx 元数据默认位于 `$HOME/.config/ja-rttys/buildx`，与镜像推送时临时使用的
 `DOCKER_CONFIG` 分开，登录和清理发布凭据不会丢失构建器配置或缓存。
+
+105 的项目专用 Jenkins 执行器使用 [jenkins-rttys-node.xml](jenkins-rttys-node.xml)，
+exclusive 标签为 `ja-rttys-builder-105`，工作目录 `/data1/wanghaoyang/ja-rttys-jenkins-agent`。
+由该机 [ja-rttys-jenkins-agent.service](ja-rttys-jenkins-agent.service) 运行，复用已有 CI 账号 `ja-alarm-ci` 和 Docker 权限，
+通过 WebSocket 连接 114。节点连接密钥仅存于工作目录的 `secret` 文件，权限 0600，不入库。
+独立的单执行器避免等待其他项目的共享队列；构建主机和 Docker daemon 仍为 105 上的既有实例。
 
 ## Jenkins 接入
 
