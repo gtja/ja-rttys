@@ -16,7 +16,7 @@ dev 开发环境目标为 **172.21.30.105**，与 204 上的租户功能测试�
 ## 流程
 
 1. 在 `SCM_AGENT_LABEL`（默认 `built-in`）检出 Jenkins 选定的精确提交。
-   节点需要 Git、Bash 和 Python 3.8+；发布构建通过 `github-pat` 创建只增不改的 Git 版本标签。
+   检出节点只需要 Git、Bash 和 coreutils；发布构建通过 `github-pat` 创建只增不改的 Git 版本标签。
    用 `git archive` 生成源码快照及 SHA256，再传给 105，避免 105 直连 GitHub 的不稳定问题。
 2. 在 `BUILD_AGENT_LABEL`（默认既有的 `ja-pipeline-builder-105`）解包并核对快照。
    节点需要 Bash、Git/检出节点、Python 3.8+、Docker、Buildx 及 BuildKit；宿主机不需要安装 Go/Node。
@@ -45,7 +45,7 @@ dev 开发环境目标为 **172.21.30.105**，与 204 上的租户功能测试�
 再次发布为 `v5.6.1.261110`，继续发布只递增修订号；次日沿用最高修订号，不重置。
 提升大版本、小版本或修订号下限时修改 VERSION。
 
-[ci-version.py](../scripts/ci-version.py) 在源码检出节点读取远端标签，原子创建带构建身份的
+[allocate-version.sh](allocate-version.sh) 在源码检出节点读取远端标签，原子创建带构建身份的
 annotated Git tag 预留发布版本。多个分支并行或同一提交重复发布也不会覆盖版本；
 标签冲突重新分配，认证或网络错误直接失败。预留发生在门禁前，失败构建的号码不回收，
 Git 标签本身不代表镜像已成功发布。只验证的构建根据已检出的标签生成预览版本，不创建标签。

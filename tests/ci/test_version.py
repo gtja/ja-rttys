@@ -1,36 +1,37 @@
 import concurrent.futures
-import importlib.util
 import json
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location('ci_version', ROOT / 'scripts/ci-version.py')
-version = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(version)
+ALLOCATOR = ROOT / 'ci/allocate-version.sh'
+
+
+def next_version(base, tags, day):
+    return subprocess.run(['bash', str(ALLOCATOR), '--next', base, day], input='\n'.join(tags) + '\n',
+                          check=True, capture_output=True, text=True).stdout.strip()
 
 
 class VersionTest(unittest.TestCase):
     def test_first_version_and_same_day_patch_increment(self):
-        self.assertEqual(version.next_version('5.6.0', [], '261110'), 'v5.6.0.261110')
+        self.assertEqual(next_version('5.6.0', [], '261110'), 'v5.6.0.261110')
         tags = ['v5.6.0.261110', 'v5.6.1.261110', 'v5.6.40.261110-arm64', 'v8.0.99.261110']
-        self.assertEqual(version.next_version('5.6.0', tags, '261110'), 'v5.6.2.261110')
+        self.assertEqual(next_version('5.6.0', tags, '261110'), 'v5.6.2.261110')
 
     def test_next_day_carries_patch_and_base_version_can_advance(self):
         tags = ['v5.6.3.261110']
-        self.assertEqual(version.next_version('5.6.0', tags, '261111'), 'v5.6.3.261111')
-        self.assertEqual(version.next_version('5.6.8', tags, '261110'), 'v5.6.8.261110')
-        self.assertEqual(version.next_version('5.7.0', tags, '261110'), 'v5.7.0.261110')
+        self.assertEqual(next_version('5.6.0', tags, '261111'), 'v5.6.3.261111')
+        self.assertEqual(next_version('5.6.8', tags, '261110'), 'v5.6.8.261110')
+        self.assertEqual(next_version('5.7.0', tags, '261110'), 'v5.7.0.261110')
 
     def test_invalid_base_and_date_rejected(self):
         for base in ['v5.6.0', '5.6.0-tenant.4', '5.06.0', '5.6', '5.6.0\n']:
-            with self.subTest(base=base), self.assertRaises(ValueError):
-                version.next_version(base, [], '261110')
-        with self.assertRaises(ValueError):
-            version.next_version('5.6.0', [], '261332')
+            with self.subTest(base=base), self.assertRaises(subprocess.CalledProcessError):
+                next_version(base, [], '261110')
+        with self.assertRaises(subprocess.CalledProcessError):
+            next_version('5.6.0', [], '261332')
 
     def test_concurrent_same_commit_reservations_are_unique_and_preserve_source(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -50,7 +51,7 @@ class VersionTest(unittest.TestCase):
 
             def reserve(index):
                 output = temp / f'version-{index}.json'
-                run = subprocess.run([sys.executable, str(ROOT / 'scripts/ci-version.py'), '--reserve',
+                run = subprocess.run(['bash', str(ALLOCATOR), '--reserve',
                                       '--commit', commit, '--run-id', f'job-{index}', '--output', str(output)],
                                      cwd=work, check=True, capture_output=True, text=True)
                 metadata = json.loads(output.read_text())

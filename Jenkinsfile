@@ -61,11 +61,11 @@ case "$1" in
 esac
 ASKPASS
 chmod 700 "$askpass"
-GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 python3 scripts/ci-version.py --reserve --commit "$SOURCE_COMMIT" --run-id "$CI_RUN_ID"
+GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 bash ci/allocate-version.sh --reserve --commit "$SOURCE_COMMIT" --run-id "$CI_RUN_ID"
 ''', returnStdout: true).trim()
                         }
                     } else {
-                        env.PACKAGE_VERSION = sh(script: 'python3 scripts/ci-version.py --commit "$SOURCE_COMMIT" --run-id "$CI_RUN_ID"', returnStdout: true).trim()
+                        env.PACKAGE_VERSION = sh(script: 'bash ci/allocate-version.sh --commit "$SOURCE_COMMIT" --run-id "$CI_RUN_ID"', returnStdout: true).trim()
                     }
                     if (!(env.PACKAGE_VERSION ==~ /v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]{6}/)) { error('无效交付版本') }
                     currentBuild.displayName = "#${env.BUILD_NUMBER} ${env.PACKAGE_VERSION} ${env.PIPELINE_BRANCH}"
