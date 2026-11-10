@@ -35,6 +35,10 @@ func main() {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "tenant-db", Usage: "absolute path to SQLite identity store (required)"},
 			&cli.StringFlag{Name: "bootstrap-password-file", Usage: "initial admin password file; used only for an empty database"},
+			&cli.StringFlag{Name: "mcp-url", Usage: "canonical HTTPS URL ending in /mcp; enables authenticated terminal MCP"},
+			&cli.StringFlag{Name: "mcp-client-id", Usage: "pre-registered public OAuth client (default ja-rtty-codex)"},
+			&cli.StringFlag{Name: "mcp-redirect-uri", Usage: "registered OAuth callback (default http://127.0.0.1/callback)"},
+			&cli.StringFlag{Name: "mcp-diagnostic-user", Usage: "non-root OS account on devices for fixed diagnostics; empty disables diagnostic execution"},
 			&cli.StringFlag{
 				Name:  "log-level",
 				Value: "info",

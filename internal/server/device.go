@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -588,7 +589,14 @@ func handleCmdMsg(dev *Device, data []byte) error {
 
 	if val, ok := dev.commands.Load(info.Token); ok {
 		req := val.(*CommandReq)
-		req.acked = true
+		if req.result != nil {
+			select {
+			case req.result <- append(json.RawMessage(nil), info.Attrs...):
+			default:
+			}
+			return nil
+		}
+		req.acked.Store(true)
 		req.c.JSON(http.StatusOK, attrs)
 		req.cancel()
 	}

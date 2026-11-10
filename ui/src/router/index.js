@@ -10,8 +10,13 @@ import Login from '../views/Login.vue'
 import Home from '../views/Home.vue'
 import Rtty from '../views/Rtty.vue'
 import Error from '../views/Error.vue'
+import OAuth from '../views/OAuth.vue'
+import McpAccess from '../views/McpAccess.vue'
+import { loginDestination } from '../loginRedirect'
 
 const routes = [
+  { path: '/oauth/consent', component: OAuth },
+  { path: '/mcp-access', component: McpAccess },
   {
     path: '/login',
     name: 'Login',
@@ -52,7 +57,8 @@ router.beforeEach((to, from, next) => {
     axios.get('/api/alive').then(() => {
       next()
     }).catch(() => {
-      next({ name: 'Login' })
+      const redirect = loginDestination(to.fullPath)
+      next({ name: 'Login', query: redirect === '/' ? {} : { redirect } })
     })
   } else {
     next()

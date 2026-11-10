@@ -29,6 +29,10 @@ func parseConfig(c *cli.Command, cfg *server.Config) error {
 	fields := map[string]any{
 		"tenant-db":               &cfg.TenantDB,
 		"bootstrap-password-file": &cfg.BootstrapPasswordFile,
+		"mcp-url":                 &cfg.MCPURL,
+		"mcp-client-id":           &cfg.MCPClientID,
+		"mcp-redirect-uri":        &cfg.MCPRedirectURI,
+		"mcp-diagnostic-user":     &cfg.MCPDiagnosticUser,
 		"addr-dev":                &cfg.AddrDev,
 		"addr-user":               &cfg.AddrUser,
 		"addr-http-proxy":         &cfg.AddrHttpProxy,

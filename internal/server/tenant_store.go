@@ -120,6 +120,10 @@ func openTenantAuth(srv *RttyServer) (*TenantAuth, error) {
 		db.Close()
 		return nil, err
 	}
+	if err = migrateTerminalMCP(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	a := &TenantAuth{db: db, srv: srv, live: map[string]*accessLease{}, attempts: map[string]loginAttempt{}, passwordSlots: make(chan struct{}, 4)}
 	var count int
 	if err = db.QueryRow("SELECT count(*) FROM users").Scan(&count); err != nil {
@@ -294,6 +298,9 @@ func (a *TenantAuth) access(sid, id string, operate bool) (*Actor, *TenantDevice
 	return p, d, nil
 }
 func (a *TenantAuth) attach(sid, id string, close func()) (*accessLease, error) {
+	return a.attachUntil(sid, id, 0, close)
+}
+func (a *TenantAuth) attachUntil(sid, id string, expires int64, close func()) (*accessLease, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	p, err := a.actorLocked(sid)
@@ -305,6 +312,9 @@ func (a *TenantAuth) attach(sid, id string, close func()) (*accessLease, error) 
 		return nil, errDenied
 	}
 	l := &accessLease{Session: sid, User: p.ID, Tenant: p.Tenant, Device: id, Expires: p.Expires, close: close}
+	if expires > 0 {
+		l.Expires = min(l.Expires, expires)
+	}
 	if err := a.auditLocked(p, "access-open", id); err != nil {
 		return nil, err
 	}

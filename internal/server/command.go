@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/zhaojh329/rtty-go/proto"
@@ -22,8 +23,9 @@ import (
 
 type CommandReq struct {
 	cancel context.CancelFunc
-	acked  bool
+	acked  atomic.Bool
 	c      *gin.Context
+	result chan json.RawMessage // MCP diagnostics never write through a Gin context.
 }
 
 type CommandReqInfo struct {
@@ -111,7 +113,7 @@ func (dev *Device) handleCmdReq(c *gin.Context, info *CommandReqInfo) {
 
 	dev.commands.Delete(token)
 
-	if !req.acked {
+	if !req.acked.Load() {
 		cmdErrResp(c, rttyCmdErrOffline)
 	}
 

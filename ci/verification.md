@@ -1,5 +1,40 @@
 # 初版 CI/CD 验证记录
 
+## 2026-11-10 105 内网基础镜像和 OAuth/MCP 门禁
+
+本次在 `105:/data1/wanghaoyang/ja-rttys` 同步开发工作区，并以逐文件 SHA256 核对源码。
+以下结果来自 105 的真实 Docker 构建，包含 OAuth/MCP、权限管理及 CI/CD 修改；
+精确发布提交及双架构发布结果以随后 dev Jenkins 构建的源码 SHA 和归档为准。
+
+基础镜像已在 105 拉取、重新 tag 并推送到 `registry.jingan.com:32008/ja/`：
+
+| 镜像 | 平台 | manifest digest |
+| --- | --- | --- |
+| `node:22-bookworm-slim` | amd64、arm64 | `sha256:a539feee9aa844aae2d3b72b96f3ce10ce6f7028653e7896571d3eb6e6e786de` |
+| `golang:1.27.3-bookworm` | amd64、arm64 | `sha256:73135ef6fd6beb400b263e372f097fbeef8b7496d614dc76fbcad0e568b01f3c` |
+| `alpine:3.22` | amd64、arm64 | `sha256:8108fe1efe18934926e04c79c91c96a47a52ac894bccb36d751d8b2ea0929710` |
+| `ja-rttys-build:go1.27.3-vuln1.9.0-v1` | amd64、arm64 | `sha256:9d6246a860a3bd2d35e35dd291f3aab1797774cdd323e31a52f1211a4d2dd0be` |
+| `buildkit:v0.30.0` | amd64（105 构建器） | `sha256:636db750fa695e135f02d0567224d62dbbf2e4902d6baaf06a3bb04e71e3b3d9` |
+
+105 直连 Docker Hub 不稳定，补齐架构时显式使用该机已有的 DaoCloud 代理；
+每种镜像从同一上游 index digest 选择 amd64/arm64 子镜像。
+Go 工具镜像通过交叉编译生成两种 govulncheck，arm64 ELF 架构已独立核对。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| 105 源码和交付回归 | 逐文件校验、全部 CI Bash 语法、8 项交付测试通过 |
+| 基础工具运行 | Node 22.23.4、npm 10.9.9、Go 1.27.3、Python 3.11.2、OpenSSL 3.0.22、govulncheck v1.9.0 |
+| 独立 BuildKit | v0.30.0；仅该仓库使用 HTTP；项目缓存上限约 20GB；未修改或重启 Docker daemon |
+| 发布凭据隔离 | 使用空的临时 `DOCKER_CONFIG` 再次运行基础镜像检查成功，项目 Buildx 元数据和缓存保留 |
+| Jenkins 模型校验 | 现有 Jenkins 服务端返回 `Jenkinsfile successfully validated.` |
+| 前端 | 10 项测试及生产构建通过，npm 审计全部为 0 |
+| Go | 299 项测试通过；`go mod verify`、`go vet` 通过；govulncheck 可达漏洞为 0，另有 3 项未被代码调用的模块级告警 |
+| 真实传输端到端 | HTTPS/TLS/WebSocket、OAuth/MCP 通过；第二写入实例拒绝、重启持久化、注册信息持久化通过 |
+| 数据库版本 | 端到端产生的真实数据库为 v4，与发布包声明一致 |
+
+105 证据位于该工作目录的 `out/verify/`、`out/sync/`；本地核对副本在 `out/build105/`。
+本节验证隔离测试实例，不代表已经升级 `ja-rttys-dev` 业务服务或完成真实终端验收。
+
 ## 2026-10-24 本地验证
 
 日期：2026-10-24。安全修复基线为 `c9b16430c33964a6bd9c61718cc3cbf8ce3be815`，

@@ -2,6 +2,7 @@
 # Build one architecture after CI verification. Registry authentication is supplied by Jenkins.
 set -euo pipefail
 cd "$(dirname "$0")"
+source ci/base-images.sh
 : "${SOURCE_COMMIT:?Set SOURCE_COMMIT to the Jenkins-selected SHA}"
 : "${PACKAGE_VERSION:?Set a unique PACKAGE_VERSION}"
 TARGET_ARCH=${TARGET_ARCH:-amd64}
@@ -18,7 +19,11 @@ mkdir -p "$dir"
 container=''
 trap '[[ -z "$container" ]] || docker rm -fv "$container" >/dev/null' EXIT
 export DOCKER_BUILDKIT=1
-docker build --platform "linux/$TARGET_ARCH" --target runtime \
+bash ci/ensure-builder.sh
+docker buildx build --builder "$RTTYS_BUILDER" --load --platform "linux/$TARGET_ARCH" --target runtime \
+    --build-arg "NODE_BUILD_IMAGE=$NODE_BUILD_IMAGE" \
+    --build-arg "GO_BUILD_IMAGE=$GO_BUILD_IMAGE" \
+    --build-arg "RUNTIME_IMAGE=$RUNTIME_IMAGE" \
     --build-arg "SOURCE_COMMIT=$SOURCE_COMMIT" \
     --build-arg "BUILD_TIME=$(date -u +%FT%TZ)" -t "$image" .
 [[ "$(docker image inspect --format '{{.Architecture}}' "$image")" == "$TARGET_ARCH" ]]

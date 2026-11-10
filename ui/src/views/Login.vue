@@ -11,7 +11,7 @@
     <el-form :model="formValue" size="large" @submit.prevent="handleSubmit">
       <el-form-item prop="username" label="账号"><el-input v-model="formValue.username" aria-label="用户名" placeholder="请输入用户名" autocomplete="username" /></el-form-item>
       <el-form-item prop="password" label="密码">
-        <el-input autofocus type="password" v-model="formValue.password" prefix-icon="lock" :placeholder="$t('Enter password...')" show-password/>
+        <el-input autofocus type="password" v-model="formValue.password" name="password" autocomplete="current-password" prefix-icon="lock" :placeholder="$t('Enter password...')" show-password/>
       </el-form-item>
       <el-form-item>
         <el-button type="primary" native-type="submit" :loading="loading" class="login-button">登录工作空间</el-button>
@@ -25,13 +25,15 @@
 
 <script setup>
 import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
+import { loginDestination } from '../loginRedirect'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 
 const { t } = useI18n()
 const router = useRouter()
+const route = useRoute()
 
 const loading = ref(false)
 const formValue = reactive({
@@ -52,7 +54,7 @@ const handleSubmit = () => {
   }
 
   axios.post('/api/signin', params).then(() => {
-    router.push('/')
+    router.replace(loginDestination(route.query.redirect))
   }).catch(() => {
     ElMessage.error(t('Signin Fail! password wrong.'))
   }).finally(() => {

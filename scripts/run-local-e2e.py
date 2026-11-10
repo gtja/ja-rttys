@@ -13,7 +13,7 @@ args=[os.environ.get('RTTY_BINARY','/tmp/rttys-tenant'),'--tenant-db',str(root/'
 initial=list(args)
 if os.environ.get("RTTY_LEGACY_BINARY"):initial[0]=os.environ["RTTY_LEGACY_BINARY"]
 server=subprocess.Popen(initial,stdout=open(root/'server.log','w'),stderr=subprocess.STDOUT)
-result={'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'artifact_root':str(root),'commands':[args],'fixture':'synthetic devices; real HTTPS/TLS/WebSocket transport'}
+result={'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'artifact_root':str(root),'commands':[list(args)],'fixture':'synthetic devices; real HTTPS/TLS/WebSocket transport'}
 try:
  for attempt in range(150):
   if server.poll() is not None:raise RuntimeError('server exited before readiness')
@@ -47,6 +47,8 @@ try:
   result['socket_exit']=r.returncode
  if r.returncode==0:
   server.terminate();server.wait(timeout=10)
+  args+=['--mcp-url',env['RTTY_URL']+'/mcp']
+  result['commands'].append(list(args))
   server=subprocess.Popen(args,stdout=open(root/'restart.log','w'),stderr=subprocess.STDOUT)
   for attempt in range(100):
    try:
@@ -61,6 +63,8 @@ try:
   if not result['restart_persistence']:raise RuntimeError('restart lost persisted identity')
   result['registration_metadata_persistence']=devices[0].get('client_description')=='fixture' and devices[0].get('last_registered_at',0)>0
   if not result['registration_metadata_persistence']:raise RuntimeError('restart lost registration metadata')
+  with (root/'mcp-run.log').open('w') as f:r=subprocess.run(['python3','scripts/mcp-e2e.py'],env=dict(env,RTTY_MCP_EVIDENCE=str(root/'mcp.json')),stdout=f,stderr=subprocess.STDOUT)
+  result['mcp_exit']=r.returncode
 except Exception as e:
  result['error']=str(e)
  raise

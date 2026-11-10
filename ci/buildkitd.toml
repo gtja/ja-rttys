@@ -1,0 +1,8 @@
+[registry."registry.jingan.com:32008"]
+  http = true
+
+[worker.oci]
+  gc = true
+  reservedSpace = "2GB"
+  maxUsedSpace = "20GB"
+  minFreeSpace = "10GB"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source ci/base-images.sh
 : "${SOURCE_COMMIT:?Set SOURCE_COMMIT to the Jenkins-selected SHA}"
 : "${CI_RUN_ID:?Set a unique CI_RUN_ID to rerun verification}"
 [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
@@ -14,7 +15,12 @@ cleanup() {
 }
 trap cleanup EXIT
 export DOCKER_BUILDKIT=1
-docker build --target verify --build-arg "CI_RUN_ID=$CI_RUN_ID" -t "$image" . 2>&1 | tee out/verify/docker-build.log
+bash ci/ensure-builder.sh
+docker buildx build --builder "$RTTYS_BUILDER" --load --target verify --build-arg "CI_RUN_ID=$CI_RUN_ID" \
+    --build-arg "NODE_BUILD_IMAGE=$NODE_BUILD_IMAGE" \
+    --build-arg "GO_BUILD_IMAGE=$GO_BUILD_IMAGE" \
+    --build-arg "RUNTIME_IMAGE=$RUNTIME_IMAGE" \
+    -t "$image" . 2>&1 | tee out/verify/docker-build.log
 container=$(docker create "$image" /bin/true)
 docker cp "$container:/ci/." out/verify/
 python3 - <<'PY'

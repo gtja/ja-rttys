@@ -88,6 +88,9 @@ func (srv *RttyServer) ListenAPI() error {
 	authorized.Any("/web2/:group/:devid/:proto/:addr/*path", a.handleWeb2)
 	if srv.tenant != nil {
 		srv.tenant.routes(r)
+		if srv.mcp != nil {
+			srv.mcp.routes(r)
+		}
 	} else {
 		authorized.GET("/signout", a.handleSignout)
 		r.POST("/api/signin", a.handleSignin)

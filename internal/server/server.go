@@ -29,11 +29,16 @@ type RttyServer struct {
 	tenant        *TenantAuth
 	pprofToken    string
 	deviceChanges deviceChangeHub
+	mcp           *terminalMCP
 }
 
 type Config struct {
 	TenantDB              string
 	BootstrapPasswordFile string
+	MCPURL                string
+	MCPClientID           string
+	MCPRedirectURI        string
+	MCPDiagnosticUser     string
 	AddrDev               string
 	AddrUser              string
 	AddrHttpProxy         string
@@ -79,6 +84,9 @@ type DeviceGroup struct {
 }
 
 func (srv *RttyServer) Run() error {
+	if srv.cfg.MCPURL != "" && srv.cfg.TenantDB == "" {
+		return fmt.Errorf("MCP requires tenant authentication")
+	}
 	if srv.cfg.PprofAddr != "" {
 		addr, err := pprofListenAddress(srv.cfg.PprofAddr)
 		if err != nil {
@@ -99,6 +107,12 @@ func (srv *RttyServer) Run() error {
 		srv.tenant, err = openTenantAuth(srv)
 		if err != nil {
 			return err
+		}
+		if srv.cfg.MCPURL != "" {
+			srv.mcp, err = newTerminalMCP(srv.tenant)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

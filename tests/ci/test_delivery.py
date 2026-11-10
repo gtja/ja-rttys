@@ -117,7 +117,7 @@ class DeliveryTest(unittest.TestCase):
             binary, metadata = deploy.unpack(archive, deploy.sha256(archive), COMMIT, stage)
         self.assertEqual(binary.read_bytes(), ELF_AMD64)
         self.assertEqual(metadata['source_commit'], COMMIT)
-        self.assertEqual(metadata['identity_schema'], 3)
+        self.assertEqual(metadata['identity_schema'], 4)
         self.assertFalse(metadata['pushed'])
 
     def test_packaging_rejects_wrong_binary_architecture(self):
