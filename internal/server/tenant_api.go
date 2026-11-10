@@ -184,6 +184,7 @@ func (a *TenantAuth) routes(r *gin.Engine) {
 	api := r.Group("/api", a.middleware)
 	api.GET("/alive", func(c *gin.Context) { c.Status(200) })
 	api.GET("/me", a.me)
+	api.GET("/events/devices", a.deviceEvents)
 	api.POST("/password", a.changePassword)
 	api.POST("/signout", func(c *gin.Context) {
 		a.mu.Lock()

@@ -28,6 +28,7 @@ type RttyServer struct {
 	shares        *shareManager
 	tenant        *TenantAuth
 	pprofToken    string
+	deviceChanges deviceChangeHub
 }
 
 type Config struct {
@@ -217,6 +218,7 @@ func (srv *RttyServer) AddDevice(dev *Device) bool {
 	}
 
 	g.count.Add(1)
+	srv.deviceChanges.publish(dev.group)
 
 	return true
 }
@@ -235,6 +237,7 @@ func (srv *RttyServer) DelDevice(dev *Device) {
 		if g.count.Add(-1) == 0 {
 			srv.groups.Delete(dev.group)
 		}
+		srv.deviceChanges.publish(dev.group)
 	}
 }
 

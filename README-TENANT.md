@@ -123,6 +123,8 @@ Device menu offers soft deletion and Token reset. Soft deletion keeps a tombston
 
 Device list shows registration -I and -D separately from administrator display name. client_description and last_registered_at persist the last authenticated registration, including an empty description. q filters device list by ID, admin name, client description and group. The stock rtty-go client spells description as --description/-d, corresponding to the legacy C client's -D. The installer uses --description.
 
+The console subscribes to authenticated, tenant-scoped SSE notifications at `GET /api/events/devices`. Device registration/disconnection triggers a data refresh and an in-page online/offline notification without reloading the page or resetting searches, filters, pagination or open forms. Notifications carry no device details; refreshed data uses the existing authorization checks. Reconnection resynchronizes the list, with a 10-second polling fallback while disconnected and a heartbeat watchdog for stalled streams. Reverse proxies must allow streaming (the response sets `X-Accel-Buffering: no`). The C client does not need rebuilding. Run `npm test` under `ui` for notification/reconnection tests; the Docker CI build also runs them.
+
 Use the packaged install-rtty with its bin/, cert.pem and SHA256SUMS. It accepts --id, --description, --host, --port, --user and --token-file (or hidden prompt); --check validates without changing services. It manages only rtty-tenant-poc, checks current-invocation registration logs, saves private backups on upgrade and reports incomplete recovery explicitly. No server admin password belongs on a client.
 
 ## Download window (tenant.4)

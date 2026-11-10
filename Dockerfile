@@ -3,6 +3,7 @@ WORKDIR /rttys/ui
 COPY ui/package*.json ./
 RUN npm ci
 COPY ui/ .
+RUN npm test
 RUN npm run build
 ARG CI_RUN_ID=local
 RUN test -n "$CI_RUN_ID" && (npm audit --audit-level=low --json > /npm-audit.json || (cat /npm-audit.json; exit 1))

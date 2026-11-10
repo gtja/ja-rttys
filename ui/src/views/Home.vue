@@ -29,7 +29,7 @@
        </el-table>
        <div class="table-bottom"><span>共 {{filteredDevices.length}} 台设备</span><el-pagination v-model:current-page="devicePage" :page-size="12" :total="filteredDevices.length" layout="prev, pager, next" hide-on-single-page/></div>
       </section>
-      <p class="footnote">终端内支持文件上传与下载。设备操作权限由当前成员的有效授权决定。</p>
+      <p class="footnote">{{updateState==='live'?'设备上下线状态实时更新。':'正在连接状态通知，暂时每 10 秒自动更新。'}}终端内支持文件上传与下载。设备操作权限由当前成员的有效授权决定。</p>
      </template>
      <section v-if="tab==='groups'&&manager" class="split-surface">
       <div class="collection-list"><div class="collection-title">全部分组 <span>{{snapshot.groups?.length||0}}</span></div><button v-for="g in snapshot.groups" :key="g.name" :class="['collection-item',{selected:selectedGroup===g.name}]" @click="selectedGroup=g.name"><span class="folder-icon"><ConsoleIcon name="folder"/></span><span><b>{{g.name}}</b><small>{{groupDevices(g.name).length}} 台设备</small></span><ConsoleIcon name="arrow"/></button><div v-if="!snapshot.groups?.length" class="empty-small">暂无分组，先创建一个项目或团队分组。</div></div>
@@ -72,22 +72,50 @@
 </template>
 
 <script setup>
-import {ref,reactive,computed,onMounted,watch,nextTick} from 'vue'
+import {ref,reactive,computed,onMounted,onBeforeUnmount,watch,nextTick} from 'vue'
 import axios from 'axios'
-import {ElMessageBox} from 'element-plus'
+import {ElMessageBox,ElNotification} from 'element-plus'
 import {useRouter} from 'vue-router'
 import ConsoleIcon from '../components/ConsoleIcon.vue'
 import RttyWeb from '../components/RttyWeb.vue'
+import {watchDeviceChanges,deviceTransitions} from '../deviceUpdates'
 const router=useRouter(),me=ref({tenants:[]}),tenant=ref(''),devices=ref([]),snapshot=ref({}),error=ref(''),tab=ref('devices'),search=ref(''),newTenant=ref(''),credential=ref(''),webTargets=ref('')
 const account=reactive({username:'',password:'',role:'operator'}),member=reactive({user_id:'',role:'operator'}),device=reactive({wire_id:'',name:'',group:''}),grant=reactive({user_id:'',device_id:'',group:''}),web=reactive({modal:false,dev:null})
 const newGroup=ref(''),enrollGroups=ref([]),groupEdit=reactive({open:false,id:'',label:'',groups:[]}),renameGroup=reactive({open:false,old:'',name:''})
 const loading=ref(false),loaded=ref(false)
+const updateState=ref('reconnecting')
+let active=true,refreshVersion=0,streamTenant,stopDeviceUpdates=()=>{}
 const passwordDialog=ref(false),password=reactive({current_password:'',new_password:''})
 const manager=computed(()=>me.value.user?.platform_admin||me.value.user?.role==='admin')
 const grantRows=computed(()=>(snapshot.value.grants||[]).map(g=>({...g,username:snapshot.value.members?.find(u=>u.id===g.user_id)?.username||g.user_id,target:g.device_id?(snapshot.value.devices?.find(d=>d.id===g.device_id)?.wire_id||g.device_id):`设备组：${g.group}`})))
-async function refresh(){loading.value=true;try{me.value=(await axios.get('/api/me')).data;tenant.value=me.value.user.tenant_id;devices.value=(await axios.get('/api/devs')).data;snapshot.value=manager.value?(await axios.get('/api/manage/snapshot')).data:{}}catch(e){if(e.response?.status===401)router.push('/login');else error.value='加载失败，请重试'}finally{loading.value=false;loaded.value=true}}
+async function refresh({background=false,notify=false}={}) {
+ const version=++refreshVersion
+ if(!background)loading.value=true
+ try {
+  const requestOptions={timeout:10000}
+  const nextMe=(await axios.get('/api/me',requestOptions)).data
+  const isManager=nextMe.user?.platform_admin||nextMe.user?.role==='admin'
+  const [nextDevices,nextSnapshot]=await Promise.all([axios.get('/api/devs',requestOptions),isManager?axios.get('/api/manage/snapshot',requestOptions):Promise.resolve({data:{}})])
+  if(!active||version!==refreshVersion)return
+  const sameTenant=loaded.value&&me.value.user?.tenant_id===nextMe.user.tenant_id
+  const changes=sameTenant&&notify?deviceTransitions(devices.value,nextDevices.data):null
+  me.value=nextMe;tenant.value=nextMe.user.tenant_id;devices.value=nextDevices.data;snapshot.value=nextSnapshot.data
+  if(streamTenant!==tenant.value) {
+   stopDeviceUpdates()
+   streamTenant=tenant.value
+   stopDeviceUpdates=watchDeviceChanges({refresh:()=>refresh({background:true,notify:true}),onState:state=>{updateState.value=state}})
+  }
+  if(changes)for(const [kind,items] of Object.entries(changes))if(items.length)ElNotification({title:kind==='online'?'设备已上线':'设备已离线',message:`${items.slice(0,3).map(d=>d.name||d.wire_id).join('、')}${items.length>3?` 等 ${items.length} 台设备`:''}`,type:kind==='online'?'success':'warning',duration:4500})
+ } catch(e) {
+  if(!active||version!==refreshVersion)return
+  if(e.response?.status===401){stopDeviceUpdates();router.push('/login')}
+  else if(!background)error.value='加载失败，请重试'
+ } finally {
+  if(active&&version===refreshVersion){loading.value=false;loaded.value=true}
+ }
+}
 async function action(fn){if(busy.value)return false;busy.value=true;error.value='';try{await fn();await refresh();return true}catch(e){error.value=e.response?.data?.error||`操作未完成（${e.response?.status||'网络错误'}）`;return false}finally{busy.value=false}}
-async function switchTenant(){form.value='';selectedGroup.value='';selectedMember.value='';devicePage.value=1;auditPage.value=1;snapshot.value={};devices.value=[];search.value='';credential.value='';enrollGroups.value=[];grant.device_id='';grant.group='';grant.user_id='';groupEdit.open=false;renameGroup.open=false;await action(()=>axios.post('/api/tenant',{tenant_id:tenant.value}))}
+async function switchTenant(){++refreshVersion;stopDeviceUpdates();streamTenant=undefined;updateState.value='reconnecting';form.value='';selectedGroup.value='';selectedMember.value='';devicePage.value=1;auditPage.value=1;snapshot.value={};devices.value=[];search.value='';credential.value='';enrollGroups.value=[];grant.device_id='';grant.group='';grant.user_id='';groupEdit.open=false;renameGroup.open=false;await action(()=>axios.post('/api/tenant',{tenant_id:tenant.value}));if(error.value)await refresh()}
 async function logout(){await axios.post('/api/signout',{});router.push('/login')}
 async function changePassword(){try{await axios.post('/api/password',password);password.current_password='';password.new_password='';passwordDialog.value=false;router.push('/login')}catch(e){error.value=`修改密码失败（${e.response?.status||'网络错误'}）`;passwordDialog.value=false}}
 function connect(d){window.open(`/rtty/${encodeURIComponent(d.id)}`,'_blank','noopener')}
@@ -105,7 +133,8 @@ function editGroups(d){Object.assign(groupEdit,{open:true,id:d.id,label:d.wire_i
 async function saveGroups(){if(await action(()=>axios.put(`/api/manage/devices/${groupEdit.id}/groups`,{groups:groupEdit.groups})))groupEdit.open=false}
 async function saveGroupName(){if(await action(()=>axios.patch(`/api/manage/groups/${encodeURIComponent(renameGroup.old)}`,{name:renameGroup.name})))renameGroup.open=false}
 async function deleteGroup(g){try{await ElMessageBox.confirm(`删除“${g.name}”会移除设备关联及成员授权，设备不会删除。没有其他授权的会话将断开。`,'删除分组',{type:'warning',confirmButtonText:'删除分组',cancelButtonText:'取消'})}catch{return}await action(()=>axios.delete(`/api/manage/groups/${encodeURIComponent(g.name)}`))}
-onMounted(refresh)
+onMounted(()=>refresh())
+onBeforeUnmount(()=>{active=false;++refreshVersion;stopDeviceUpdates()})
 
 
 const form=ref(''),busy=ref(false),mainArea=ref(null),selectedGroup=ref(''),selectedMember=ref(''),deviceFilter=ref('all'),devicePage=ref(1),auditPage=ref(1),auditSearch=ref(''),grantKind=ref('group')
