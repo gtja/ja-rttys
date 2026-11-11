@@ -6,7 +6,7 @@
 [原生程序动态更新](../docs/native-update.md)。
 
 Jenkins 人工 dev/test 构建可选 `RTTY_ACTION=check`，使用现有
-`public-aliyun-server-1` 凭证只读检查 `47.111.155.82`。
+`ssh-rtty` 凭证只读检查 `47.111.155.82`。
 仅人工 test 构建可选 `RTTY_ACTION=deploy`，默认 `skip`。
 `PUBLISH_IMAGE=true` 是按需附加的镜像交付选项；下文镜像发布说明仅适用于此选项。
 
@@ -138,7 +138,7 @@ master 分支未改动。推送 dev 后由多分支扫描创建对应构建任�
 | `github-pat` | Username/password | GitHub Branch Source / HTTPS 检出、发布版本标签预留 |
 | `registry-jingan-com` | Username/password | master/dev 私仓推送 |
 | `public-aliyun-registry-new` | Username/password | test/release 指定阿里云实例推送 |
-| `public-aliyun-server-1` | Username/password | 公网 rtty 只读检查及可选 test 更新 |
+| `ssh-rtty` | Username/password | 公网 rtty 专用凭证，只读检查及可选 test 更新 |
 | `ssh-105` | Username/password | 可选的独立 dev 实例升级；账号需有该主机的 root 权限 |
 
 需要 Pipeline、Git/GitHub Branch Source、Credentials Binding；启用部署时构建节点还需 OpenSSH 和 sshpass。

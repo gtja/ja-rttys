@@ -16,7 +16,7 @@ test 正式构建保留 `v大版本.小版本.修订号.YYMMDD` 版本标签，
 ## 公网 rtty 的 CI/CD
 
 固定目标为 `47.111.155.82` 的 `ja-rttys.service`，程序路径
-`/opt/ja-rttys/rttys`。Jenkins 使用已有 `public-aliyun-server-1` 凭证绑定，
+`/opt/ja-rttys/rttys`。Jenkins 使用专用 `ssh-rtty` 凭证绑定，
 密码只通过 Jenkins 环境传给 sshpass，不写入源码、命令参数或日志。
 SSH 主机公钥通过已认证的 JumpServer 资产读取并固定在 `ci/rtty-known-hosts`。
 密钥轮换时需重新核对指纹后更新文件，禁止关闭主机校验。
