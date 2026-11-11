@@ -4,11 +4,14 @@ export LC_ALL=C
 umask 077
 usage() {
   cat <<'HELP'
-Usage: sudo ./install-rtty --id DEVICE_ID [options]
-  --host HOST          Server (default 172.21.30.204)
-  --port PORT          TLS device port (default 19512)
+Usage: sudo ./install-rtty [options]
+  Prompts for device name and hidden Token. Client ID is generated automatically.
+  --id DEVICE_ID       Optional client registration ID
+  --name TEXT          Device name sent as registration description
+  --host HOST          Server (default 47.111.133.127)
+  --port PORT          TLS device port (default 5912)
   --user USER          Terminal OS user (default nvidia)
-  --description TEXT   Registration description (-D)
+  --description TEXT   Registration description (-d)
   --token-file FILE    Read the device token from a private file
                        Otherwise prompt with input hidden (never pass token in argv).
   --check              Validate inputs and bundle without changing the service
@@ -16,29 +19,44 @@ Usage: sudo ./install-rtty --id DEVICE_ID [options]
 
 Run from the extracted package containing bin/, cert.pem and SHA256SUMS.
 Enroll the device in the console first. TLS verification is always enabled.
+Shared trust bundle installs to /etc/rtty/trusted-ca.pem.
 Only rtty-tenant-poc is managed; unrelated rtty installations are preserved.
 HELP
 }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 bundle=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-device_id= host=172.21.30.204 port=19512 login_user=nvidia description= token_file= check_only=false
+device_id= host=47.111.133.127 port=5912 login_user=nvidia description= token_file= check_only=false
 while (($#)); do
   case "$1" in
     --help|-h) usage; exit 0;;
     --check) check_only=true; shift;;
-    --id|--host|--port|--user|--description|--token-file)
+    --id|--host|--port|--user|--name|--description|--token-file)
       (($#>=2)) || die "Missing value for $1"
       case "$1" in
         --id) device_id=$2;; --host) host=$2;; --port) port=$2;;
-        --user) login_user=$2;; --description) description=$2;; --token-file) token_file=$2;;
+        --user) login_user=$2;; --name|--description) description=$2;; --token-file) token_file=$2;;
       esac; shift 2;;
     *) die "Unknown option: $1";;
   esac
 done
 [[ $(uname -s) == Linux ]] || die 'Linux is required'
 [[ $EUID == 0 ]] || die 'Run with sudo/root'
-for cmd in systemctl journalctl sha256sum install mktemp stat sed cp grep id; do command -v "$cmd" >/dev/null || die "Missing command: $cmd"; done
+for cmd in systemctl journalctl sha256sum install mktemp stat sed cp grep id cmp; do command -v "$cmd" >/dev/null || die "Missing command: $cmd"; done
 [[ -d /run/systemd/system ]] || die 'systemd must be running'
+if [[ -z $device_id ]]; then
+  [[ -r /etc/machine-id ]] || die 'Cannot generate client ID; provide --id'
+  machine_id=$(</etc/machine-id)
+  [[ $machine_id =~ ^[a-fA-F0-9]{32}$ ]] || die 'Invalid machine-id; provide --id'
+  device_id="rtty-${machine_id:0:24}"
+fi
+if [[ -z $description ]]; then
+  if [[ -t 0 ]]; then
+    read -r -p '设备名称 / Device name: ' description
+    [[ -n $description ]] || die 'Device name must not be empty'
+  else
+    description=$device_id
+  fi
+fi
 [[ $device_id =~ ^[A-Za-z0-9._-]{1,32}$ ]] || die 'Device ID must be 1-32 ASCII letters, digits, dots, underscores or hyphens'
 [[ $host =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || die 'Host must be IPv4 or DNS name'
 [[ $port =~ ^[0-9]{1,5}$ ]] && ((10#$port>=1 && 10#$port<=65535)) || die 'Invalid port'
@@ -47,8 +65,14 @@ port=$((10#$port))
 id "$login_user" >/dev/null 2>&1 || die 'OS user does not exist'
 [[ ${#description} -le 126 && $description != *$'\n'* && $description != *$'\r'* ]] || die 'Description must be one line, at most 126 bytes'
 case $(uname -m) in aarch64|arm64) arch=arm64;; x86_64|amd64) arch=amd64;; *) die 'Only ARM64 and x86_64 are supported';; esac
-[[ -f $bundle/SHA256SUMS && -f $bundle/cert.pem && -f $bundle/bin/rtty-linux-$arch ]] || die 'Extract the complete installation package first'
+[[ -f $bundle/install-rtty-command && -f $bundle/rtty-command.py && -f $bundle/SHA256SUMS && -f $bundle/cert.pem && -f $bundle/bin/rtty-linux-$arch ]] || die 'Extract the complete installation package first'
 (cd "$bundle" && sha256sum --status -c SHA256SUMS) || die 'Package checksum verification failed'
+shared_ca=/etc/rtty/trusted-ca.pem
+[[ ! -L /etc/rtty && ! -L $shared_ca ]] || die 'Shared CA path must not be a symlink'
+if [[ -e $shared_ca ]]; then
+  [[ -f $shared_ca ]] && cmp -s "$bundle/cert.pem" "$shared_ca" || die 'Existing shared CA differs; preserve it and reconcile the trust bundle before installing'
+fi
+ca_created=false
 base=/opt/rtty-tenant-poc
 helper=/usr/local/bin/rtty-tenant-poc
 unit=/etc/systemd/system/rtty-tenant-poc.service
@@ -91,7 +115,7 @@ install -m 0755 "$bundle/bin/rtty-linux-$arch" "$stage/rtty"
 install -m 0644 "$bundle/cert.pem" "$stage/cert.pem"
 {
   printf 'id: '; config_scalar "$device_id"; printf '\nhost: '; config_scalar "$host"
-  printf '\nport: %s\nssl: true\ncacert: /opt/rtty-tenant-poc/cert.pem\nreconnect: true\nheartbeat: 5\nusername: ' "$port"
+  printf '\nport: %s\nssl: true\ncacert: /etc/rtty/trusted-ca.pem\nreconnect: true\nheartbeat: 5\nusername: ' "$port"
   config_scalar "$login_user"; printf '\ndescription: '; config_scalar "$description"
   printf '\ntoken: '; config_scalar "$token"; printf '\n'
 } > "$stage/rtty.conf"
@@ -113,6 +137,7 @@ UNIT
 rollback() {
   trap - ERR; set +e
   recovery_failed=false
+  if $ca_created; then rm -f -- "$shared_ca" || recovery_failed=true; fi
   systemctl stop "$service" || recovery_failed=true
   if $existing; then
     cp -a "$backup/client/." "$base/" || recovery_failed=true
@@ -140,6 +165,11 @@ install -d -m 0700 "$base"
 install -m 0755 "$stage/rtty" "$base/rtty"
 install -m 0755 "$stage/rtty" "$helper"
 install -m 0644 "$stage/cert.pem" "$base/cert.pem"
+if [[ ! -e $shared_ca ]]; then
+  install -d -m 0755 /etc/rtty
+  ca_created=true
+  install -m 0644 "$stage/cert.pem" "$shared_ca"
+fi
 install -m 0600 "$stage/rtty.conf" "$base/rtty.conf"
 install -m 0644 "$stage/service" "$unit"
 systemctl daemon-reload
@@ -153,8 +183,9 @@ for attempt in {1..15}; do
   sleep 2
 done
 if ! $registered; then printf 'Device registration was not confirmed within 30 seconds.\n' >&2; false; fi
+bash "$bundle/install-rtty-command"
 trap - ERR
 printf 'Installed %s -> %s:%s; service active, enabled and registration confirmed.\n' "$device_id" "$host" "$port"
 printf 'Registration confirmed by the current service invocation; verify terminal access in the console.\n'
-printf 'File helper: %s -R (receive), %s -S FILE (send)\n' "$helper" "$helper"
+printf 'File helper: rtty -R (receive), rtty -S FILE (send); automatically matches this terminal.\n'
 [[ -z $backup ]] || printf 'Rollback files: %s\n' "$backup"

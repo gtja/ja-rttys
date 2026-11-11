@@ -5,7 +5,7 @@ Standalone fork of rttys upstream `bc1ac60478172aa984c551652a0b1e1ff2a782bc` (v5
 ## Implemented boundary
 
 - Built-in usernames and bcrypt passwords (12–72 bytes), platform admin and tenant memberships (`admin`, `operator`, `viewer`). No public signup. Bootstrap `admin` comes from a local password file only when the database is empty.
-- Tenant administrators enroll devices and obtain an independent 256-bit random credential. Only its SHA-256 digest is persisted. The device wire ID is checked against the credential; tenant and internal opaque device ID are determined by the server, never by the client group.
+- Tenant administrators enroll devices and obtain an independent 256-bit random credential. Only its SHA-256 digest is persisted. The Token selects the tenant and stable internal device ID. The client-reported `-I` may differ from the platform enrollment number and may change on reconnect; it does not change ownership or grants. The client group never selects a tenant.
 - Viewer: tenant device metadata only. Operator: explicitly granted device or group. Tenant admin: all devices in that tenant. Platform admin explicitly switches into a tenant to operate its devices.
 - All list/detail/count endpoints are scoped. Terminal and existing file-transfer WebSocket share the authorized device lease. Revoke, disable, credential rotation and tenant switches invalidate affected live channels.
 - Password changes revoke existing login sessions; disable/member changes are checked again when opening a connection. Login throttles: 10 attempts/account+IP/minute, aggregate 100/IP/minute, with Retry-After. Successful login resets only that account+IP counter. Missing/disabled users perform the same bcrypt cost as existing users. Expensive password work is bounded and outside the policy mutex.
@@ -56,7 +56,7 @@ go build -o /tmp/rttys-socket-check ./cmd/tenant-e2e
 python3 scripts/run-local-e2e.py
 ```
 
-The runner creates a fresh database, uses distinct ephemeral loopback ports, and writes a JSON result plus server/test logs even on failures. The protocol fixture is synthetic; the server and TLS/HTTP/WebSocket paths are real. It includes wrong/absent credentials, wire-ID binding, tenant isolation, file data, live revocation, public-proxy-host cookie forgery, account throttling, exclusive database ownership and restart persistence.
+The runner creates a fresh database, uses distinct ephemeral loopback ports, and writes a JSON result plus server/test logs even on failures. The protocol fixture is synthetic; the server and TLS/HTTP/WebSocket paths are real. It includes wrong/absent credentials, Token-selected identity with changing reported IDs, tenant isolation, file data, live revocation, public-proxy-host cookie forgery, account throttling, exclusive database ownership and restart persistence.
 
 Real device acceptance:
 
@@ -70,9 +70,15 @@ This uses the private provisioning output and the enrolled NVIDIA device. It ope
 
 Existing focused upstream tests were retained. `TestRttysStress` is an external-client/manual long-running harness and is excluded from unattended regression runs. Security regressions are covered by the `TestSecurity*` tests and the panic-isolation subprocess test. Run `go test ./... -skip TestRttysStress -count=1` and `go vet ./...` after building the UI.
 
+## Persistent database on updates
+
+Keep the database outside the release package. The public instance reuses `/opt/ja-rttys/data/identity.db`; 204 reuses `/opt/rttys-tenant-poc/data/identity.db`. Replacing the program must retain the configured database path and data directory. A container uses a persistent bind mount or volume at `/data`; do not store the database in the image layer.
+
+`scripts/ci-deploy.py` now preserves the existing database without making a copy on normal same-schema updates. It retains the previous binary for program rollback. Add `--backup-db` only when a database snapshot is explicitly needed; schema migrations require a separate plan and pre-migration snapshot. Automatic rollback never replaces the database with an older copy.
+
 ## Rollback and limitations
 
-Stop only `rttys-tenant-poc` on 204 and `rtty-tenant-poc` on 156. Existing rtty, MeshCentral and ShellHub are not replaced. Back up SQLite only with this single instance stopped; keep file ownership/permissions. For upgrade rollback restore the saved binary and, if schema changed, the stopped-instance database backup.
+Stop only `rttys-tenant-poc` on 204 and `rtty-tenant-poc` on 156. Existing rtty, MeshCentral and ShellHub are not replaced. Back up SQLite only with this single instance stopped; keep file ownership/permissions. For same-schema update failures restore only the saved binary and reuse the current database. Schema changes require explicit migration/recovery; never automatically overwrite new data with an older backup.
 
 This is a test candidate, not a production rollout. Not covered: HA, external identity providers, approval workflows, arbitrary OS-command policies, terminal recording, bulk fleet migration, large-file/weak-network endurance, tenant ownership transfer, and device credential cloning with a valid stolen secret. A copied valid bearer secret is not hardware attestation. Certificate issuance, backup retention and Internet-facing DoS controls require deployment-specific decisions.
 

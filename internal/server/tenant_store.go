@@ -26,6 +26,7 @@ import (
 // The single-instance gate serializes policy changes with connection admission.
 // A revoked lease blocks data immediately; transport closure is asynchronous.
 type TenantAuth struct {
+	ota           *menderBridge
 	mu            sync.Mutex
 	db            *sql.DB
 	srv           *RttyServer
@@ -39,6 +40,7 @@ type loginAttempt struct {
 }
 type accessLease struct {
 	Session, User, Tenant, Device string
+	Feature                       string
 	Expires                       int64
 	revoked                       atomic.Bool
 	close                         func()
@@ -151,6 +153,26 @@ func openTenantAuth(srv *RttyServer) (*TenantAuth, error) {
 			return nil, err
 		}
 		log.Info().Msg("Initial administrator created; change its password and remove the bootstrap password file")
+	}
+	if err = a.initDeviceAuthMode(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err = a.initPresence(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err = a.initOperations(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err = a.initOTA(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err = a.initTenantFeatures(); err != nil {
+		db.Close()
+		return nil, err
 	}
 	go func() {
 		ticker := time.NewTicker(time.Second)
@@ -298,9 +320,15 @@ func (a *TenantAuth) access(sid, id string, operate bool) (*Actor, *TenantDevice
 	return p, d, nil
 }
 func (a *TenantAuth) attach(sid, id string, close func()) (*accessLease, error) {
-	return a.attachUntil(sid, id, 0, close)
+	return a.attachFeatureUntil(sid, id, "", 0, close)
 }
 func (a *TenantAuth) attachUntil(sid, id string, expires int64, close func()) (*accessLease, error) {
+	return a.attachFeatureUntil(sid, id, "", expires, close)
+}
+func (a *TenantAuth) attachFeature(sid, id, feature string, close func()) (*accessLease, error) {
+	return a.attachFeatureUntil(sid, id, feature, 0, close)
+}
+func (a *TenantAuth) attachFeatureUntil(sid, id, feature string, expires int64, close func()) (*accessLease, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	p, err := a.actorLocked(sid)
@@ -308,10 +336,10 @@ func (a *TenantAuth) attachUntil(sid, id string, expires int64, close func()) (*
 		return nil, err
 	}
 	d, err := a.deviceLocked(id)
-	if err != nil || !a.allowedLocked(p, d, true) {
+	if err != nil || !a.allowedLocked(p, d, true) || !a.featureAllowedLocked(p.Tenant, feature) {
 		return nil, errDenied
 	}
-	l := &accessLease{Session: sid, User: p.ID, Tenant: p.Tenant, Device: id, Expires: p.Expires, close: close}
+	l := &accessLease{Session: sid, User: p.ID, Tenant: p.Tenant, Device: id, Feature: feature, Expires: p.Expires, close: close}
 	if expires > 0 {
 		l.Expires = min(l.Expires, expires)
 	}
@@ -351,16 +379,33 @@ func (a *TenantAuth) auditLocked(p *Actor, action, resource string) error {
 func (a *TenantAuth) register(dev *Device) byte {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if len(dev.token) < 32 {
-		return devRegErrInvalidToken
+	dev.link = "default"
+	if strings.HasPrefix(dev.group, "link:") {
+		dev.link = strings.TrimPrefix(dev.group, "link:")
+		if dev.link == "" || !validDeviceLink(dev.link) {
+			return devRegErrInvalidToken
+		}
 	}
-	var id, tenant, wire, hash string
+	var id, tenant, hash string
 	var disabled, tenantDisabled bool
-	err := a.db.QueryRow(`SELECT d.id,d.tenant,d.wire_id,d.key_hash,d.disabled,t.disabled FROM devices d JOIN tenants t ON d.tenant=t.id WHERE d.key_hash=? AND d.deleted_at=0`, digest(dev.token)).Scan(&id, &tenant, &wire, &hash, &disabled, &tenantDisabled)
-	if err != nil || disabled || tenantDisabled || wire != dev.id || subtle.ConstantTimeCompare([]byte(hash), []byte(digest(dev.token))) != 1 {
-		return devRegErrInvalidToken
+	var err error
+	if a.srv.cfg.DeviceAuthMode == "compat" {
+		id, tenant, err = a.compatDeviceLocked(dev)
+		if err != nil {
+			return devRegErrInvalidToken
+		}
+	} else {
+		if len(dev.token) < 32 {
+			return devRegErrInvalidToken
+		}
+		// The token determines the stable device and tenant. The client's -I is
+		// connection metadata and may change without changing ownership or grants.
+		err = a.db.QueryRow(`SELECT d.id,d.tenant,d.key_hash,d.disabled,t.disabled FROM devices d JOIN tenants t ON d.tenant=t.id WHERE d.key_hash=? AND d.deleted_at=0`, digest(dev.token)).Scan(&id, &tenant, &hash, &disabled, &tenantDisabled)
+		if err != nil || disabled || tenantDisabled || subtle.ConstantTimeCompare([]byte(hash), []byte(digest(dev.token))) != 1 {
+			return devRegErrInvalidToken
+		}
 	}
-	if a.srv.GetDevice(tenant, id) != nil {
+	if a.srv.GetDeviceLink(tenant, id, dev.link) != nil {
 		return devRegErrIdConflicting
 	}
 	if _, err = a.db.Exec("UPDATE devices SET client_description=?,last_registered_at=? WHERE id=?", dev.desc, time.Now().Unix(), id); err != nil {
@@ -371,7 +416,12 @@ func (a *TenantAuth) register(dev *Device) byte {
 	dev.id = id
 	dev.group = tenant
 	dev.token = ""
+	if err = a.presenceStartLocked(dev); err != nil {
+		return devRegErrInvalidToken
+	}
 	if !a.srv.AddDevice(dev) {
+		a.db.Exec("DELETE FROM device_presence WHERE id=?", dev.presenceID)
+		dev.presenceID = 0
 		return devRegErrIdConflicting
 	}
 	return 0

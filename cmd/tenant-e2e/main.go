@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
@@ -103,7 +104,17 @@ func run() {
 		conn.SetDeadline(time.Now().Add(5 * time.Second))
 		m := proto.NewMsgReaderWriter(proto.RoleRtty, conn)
 		payload := append([]byte{4}, []byte(wire+"\x00fixture\x00"+token+"\x00")...)
-		_ = group
+		if group != "" {
+			payload = []byte{6}
+			for _, item := range []struct {
+				typ   byte
+				value []byte
+			}{{proto.MsgRegAttrDevid, []byte(wire)}, {proto.MsgRegAttrToken, []byte(token)}, {proto.MsgRegAttrGroup, []byte(group)}, {proto.MsgRegAttrHeartbeat, []byte{10}}} {
+				payload = append(payload, item.typ)
+				payload = binary.BigEndian.AppendUint16(payload, uint16(len(item.value)))
+				payload = append(payload, item.value...)
+			}
+		}
 		if e = m.Write(proto.MsgTypeRegister, payload); e != nil {
 			panic(e)
 		}
@@ -114,16 +125,16 @@ func run() {
 		conn.SetDeadline(time.Time{})
 		return conn, m, d[0]
 	}
-	for _, v := range []struct{ wire, token, name string }{{"same-device", "", "missing device secret"}, {"same-device", "wrong-secret-00000000000000000000000000000000", "wrong device secret"}, {"other-device", f.DeviceA["token"], "secret bound to wire identity"}} {
+	for _, v := range []struct{ wire, token, name string }{{"same-device", "", "missing device secret"}, {"same-device", "wrong-secret-00000000000000000000000000000000", "wrong device secret"}} {
 		c, _, code := register(v.wire, v.token, "")
 		check(v.name, code != 0, code)
 		c.Close()
 	}
-	ca, ma, code := register("same-device", f.DeviceA["token"], "")
-	check("valid A device", code == 0, code)
+	ca, ma, code := register("reported-A-changing", f.DeviceA["token"], "")
+	check("valid token accepts changed reported ID", code == 0, code)
 	defer ca.Close()
-	cb, mb, code := register("same-device", f.DeviceB["token"], "")
-	check("same wire identity B device", code == 0, code)
+	cb, mb, code := register("reported-A-changing", f.DeviceB["token"], "")
+	check("same reported ID uses token tenant B", code == 0, code)
 	defer cb.Close()
 	var downloadSent atomic.Int32
 	fake := func(conn net.Conn, m *proto.MsgReaderWriter) {
@@ -208,12 +219,14 @@ func run() {
 		c        *http.Client
 		id, name string
 	}{{a, f.DeviceA["id"], "A list isolation"}, {b, f.DeviceB["id"], "B list isolation"}} {
-		r := call(v.c, "GET", "/api/devs", nil)
+		r := call(v.c, "GET", "/api/devs?q=reported-A-changing", nil)
 		var rows []map[string]any
 		json.NewDecoder(r.Body).Decode(&rows)
 		r.Body.Close()
 		check(v.name, len(rows) == 1 && rows[0]["id"] == v.id, rows)
 		check("actual registration description exposed", rows[0]["client_description"] == "fixture", rows[0]["client_description"])
+		check("platform enrollment number preserved", rows[0]["wire_id"] == "same-device", rows[0]["wire_id"])
+		check("current reported ID exposed", rows[0]["client_id"] == "reported-A-changing", rows[0]["client_id"])
 	}
 	wsURL := "wss" + strings.TrimPrefix(base, "https") + "/api/connect/" + f.DeviceA["id"]
 	headers := http.Header{}
@@ -348,6 +361,45 @@ func run() {
 	r.Body.Close()
 	r = call(admin, "POST", "/api/tenant", map[string]string{"tenant_id": f.TenantA["id"]})
 	check("admin switch A", r.StatusCode == 200, r.StatusCode)
+	r.Body.Close()
+	// Tenant feature revocation closes managed channels while retaining terminal access.
+	featureWS, _, featureErr := dial.Dial(wsURL, headers)
+	if featureErr != nil {
+		panic(featureErr)
+	}
+	featureWS.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, featureLogin, featureErr := featureWS.ReadMessage()
+	check("feature test terminal opened", featureErr == nil && bytes.Contains(featureLogin, []byte("login")), string(featureLogin))
+	featurePath := "/api/manage/tenants/" + f.TenantA["id"] + "/features"
+	featuresOff := map[string]any{"features": map[string]bool{"ota": false, "tasks": false, "files": false, "web": false}}
+	r = call(admin, "PUT", featurePath, featuresOff)
+	check("platform revokes four tenant features", r.StatusCode == 200, r.StatusCode)
+	r.Body.Close()
+	r, featureErr = pc.Get(proxyURL)
+	check("feature revocation closes existing proxy", featureErr == nil && r.StatusCode == 401, fmt.Sprint(featureErr))
+	if r != nil {
+		r.Body.Close()
+	}
+	featureWS.WriteMessage(websocket.BinaryMessage, append([]byte{0}, []byte("TERMINAL_WITH_FEATURES_OFF")...))
+	_, featureData, featureErr := featureWS.ReadMessage()
+	check("base terminal survives feature revocation", featureErr == nil && bytes.Contains(featureData, []byte("TERMINAL_WITH_FEATURES_OFF")), string(featureData))
+	featureWS.WriteJSON(map[string]any{"type": "fileInfo", "size": 1, "name": "denied.txt"})
+	_, featureData, featureErr = featureWS.ReadMessage()
+	check("terminal file controls respect file feature", featureErr == nil && bytes.Contains(featureData, []byte("fileError")), string(featureData))
+	featureWS.Close()
+	r = call(admin, "PUT", featurePath, map[string]any{"features": map[string]bool{"ota": true, "tasks": true, "files": true, "web": true}})
+	check("platform restores tenant features", r.StatusCode == 200, r.StatusCode)
+	r.Body.Close()
+	// The old proxy was revoked; create a fresh proxy for the remaining revocation checks.
+	r = call(a, "GET", "/api/web/"+f.DeviceA["id"]+"/http/127.0.0.1:8080/", nil)
+	ticketURL = r.Header.Get("Location")
+	r.Body.Close()
+	r, featureErr = pc.Get(ticketURL)
+	if featureErr != nil {
+		panic(featureErr)
+	}
+	io.Copy(io.Discard, r.Body)
+	proxyURL = r.Request.URL.String()
 	r.Body.Close()
 
 	// Multi-group policy oracle: real channels must survive any remaining grant.
@@ -561,6 +613,67 @@ func run() {
 	r = call(admin, "PATCH", "/api/manage/devices/"+life["id"], map[string]bool{"disabled": false})
 	check("deleted device cannot be enabled", r.StatusCode == 404, r.StatusCode)
 	r.Body.Close()
+
+	r = call(admin, "POST", "/api/manage/devices", map[string]any{"wire_id": "multi-device", "name": "Multi-link fixture", "web_targets": []string{}})
+	check("multi-link physical device enrolled", r.StatusCode == 201, r.StatusCode)
+	var multi map[string]string
+	json.NewDecoder(r.Body).Decode(&multi)
+	r.Body.Close()
+	c5, _, mcode := register("5g-reported-id", multi["token"], "link:5g")
+	check("5g accepts device token", mcode == 0, mcode)
+	defer c5.Close()
+	c14, _, mcode := register("14g-reported-id", multi["token"], "link:14g")
+	check("different reported IDs share token across links", mcode == 0, mcode)
+	defer c14.Close()
+	duplicate, _, mcode := register("changed-again-same-link", multi["token"], "link:5g")
+	check("changed ID cannot bypass same-link conflict", mcode != 0, mcode)
+	duplicate.Close()
+	for _, link := range []string{"5g", "14g"} {
+		r = call(admin, "GET", "/api/dev/"+multi["id"]+"?link="+link, nil)
+		var info map[string]any
+		json.NewDecoder(r.Body).Decode(&info)
+		r.Body.Close()
+		check("explicit link routing "+link, info["link"] == link, info)
+		check("link reported ID "+link, info["client_id"] == link+"-reported-id", info)
+	}
+	r = call(admin, "POST", "/api/manage/devices/"+multi["id"]+"/rotate", map[string]string{"confirm_wire_id": "multi-device"})
+	check("shared token rotation", r.StatusCode == 200, r.StatusCode)
+	var newKey map[string]string
+	json.NewDecoder(r.Body).Decode(&newKey)
+	r.Body.Close()
+	for _, conn := range []net.Conn{c5, c14} {
+		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		_, e := conn.Read(make([]byte, 1))
+		timeout := false
+		if n, ok := e.(net.Error); ok {
+			timeout = n.Timeout()
+		}
+		check("rotation closes every link", e != nil && !timeout, fmt.Sprint(e))
+		conn.Close()
+	}
+	for _, link := range []string{"5g", "14g"} {
+		old, _, code := register("multi-device", multi["token"], "link:"+link)
+		check("old shared token rejected "+link, code != 0, code)
+		old.Close()
+	}
+	c5, _, mcode = register("5g-after-id-change", newKey["token"], "link:5g")
+	check("new token 5g", mcode == 0, mcode)
+	c14, _, mcode = register("14g-after-id-change", newKey["token"], "link:14g")
+	check("new token 14g", mcode == 0, mcode)
+	c5.Close()
+	time.Sleep(150 * time.Millisecond)
+	r = call(admin, "GET", "/api/dev/"+multi["id"], nil)
+	var auto map[string]any
+	json.NewDecoder(r.Body).Decode(&auto)
+	r.Body.Close()
+	check("surviving14g selected after5g loss", auto["link"] == "14g", auto)
+	r = call(admin, "DELETE", "/api/manage/devices/"+multi["id"], nil)
+	check("multi-device deletion", r.StatusCode == 200, r.StatusCode)
+	r.Body.Close()
+	c14.Close()
+	old, _, mcode = register("multi-device", newKey["token"], "link:14g")
+	check("deleted multi-device cannot register", mcode != 0, mcode)
+	old.Close()
 	for i := 0; i < 10; i++ {
 		r = call(admin, "POST", "/api/signin", map[string]string{"username": "admin", "password": "intentionally-wrong"})
 		r.Body.Close()

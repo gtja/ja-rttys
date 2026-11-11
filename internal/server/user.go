@@ -28,16 +28,18 @@ import (
 )
 
 type User struct {
-	fileMu   sync.Mutex
-	download downloadFlow
-	policy   *accessLease
-	conn     *websocket.Conn
-	sid      string
-	dev      *Device
-	pending  chan byte
-	serial   bool
-	close    sync.Once
-	closed   atomic.Bool
+	writeMu    sync.Mutex
+	fileMu     sync.Mutex
+	download   downloadFlow
+	policy     *accessLease
+	fileAccess func() bool
+	conn       *websocket.Conn
+	sid        string
+	dev        *Device
+	pending    chan byte
+	serial     bool
+	close      sync.Once
+	closed     atomic.Bool
 }
 
 type devicePeer interface {
@@ -83,7 +85,24 @@ func (user *User) OnFile(data []byte) {
 	if len(data) == 0 {
 		return
 	}
+	if !user.filesAllowed() {
+		user.denyFile()
+		return
+	}
 	user.onFileWindow(data)
+}
+
+func (user *User) filesAllowed() bool {
+	return user.fileAccess == nil || user.fileAccess()
+}
+
+func (user *User) denyFile() {
+	user.fileMu.Lock()
+	user.download.active = false
+	user.download.ignoreData = true
+	user.fileMu.Unlock()
+	user.dev.WriteMsg(proto.MsgTypeFile, user.sid, proto.MsgTypeFileAbort)
+	user.WriteMsg(websocket.TextMessage, []byte(`{"type":"fileError","error":"当前租户未获文件功能授权"}`))
 }
 
 func downloadFilename(name string) string {
@@ -146,7 +165,7 @@ func handleUserConnection(srv *RttyServer, c *gin.Context) {
 
 	user := &User{conn: conn, serial: c.Query("mode") == "serial"}
 
-	dev := srv.GetDevice(requestGroup(c), devid)
+	dev := srv.GetDeviceLink(requestGroup(c), devid, c.Query("link"))
 	if dev == nil {
 		user.SendCloseMsg(LoginErrorOffline, "device not found")
 		conn.Close()
@@ -175,6 +194,7 @@ func handleUserConnection(srv *RttyServer, c *gin.Context) {
 			return
 		}
 		user.policy = lease
+		user.fileAccess = func() bool { return srv.tenant.featureAllowed(lease.Tenant, "files") }
 		defer srv.tenant.detach(lease)
 	}
 
@@ -285,6 +305,9 @@ func (user *User) Close() {
 }
 
 func (user *User) WriteMsg(typ int, data []byte) error {
+	user.writeMu.Lock()
+	defer user.writeMu.Unlock()
+	user.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	return user.conn.WriteMessage(typ, data)
 }
 
@@ -341,6 +364,10 @@ func (user *User) handleMsg() {
 
 			typ := proto.MsgTypeTermData
 			if data[0] == 1 && !user.serial {
+				if !user.filesAllowed() {
+					user.denyFile()
+					continue
+				}
 				typ = proto.MsgTypeFile
 			} else if data[0] != 0 {
 				return
@@ -356,6 +383,10 @@ func (user *User) handleMsg() {
 				return
 			}
 
+			if strings.HasPrefix(msg.Type, "file") && !user.filesAllowed() {
+				user.denyFile()
+				continue
+			}
 			switch msg.Type {
 			case "winsize":
 				if !user.serial {

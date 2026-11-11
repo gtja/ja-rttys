@@ -14,7 +14,7 @@ publish_manifest() {
     docker manifest push --insecure "$image"
 }
 
-for source_image in node:22-bookworm-slim golang:1.27.3-bookworm alpine:3.22; do
+for source_image in node:22-bookworm-slim golang:1.27.4-bookworm alpine:3.22; do
     target="$BASE_IMAGE_REGISTRY/$source_image"
     upstream="$source_image"
     [[ -z "$UPSTREAM_IMAGE_PREFIX" ]] || upstream="$UPSTREAM_IMAGE_PREFIX/$source_image"
@@ -40,7 +40,7 @@ bash ci/ensure-builder.sh
 for arch in amd64 arm64; do
     docker buildx build --builder "$RTTYS_BUILDER" --load \
         --platform "linux/$arch" -f ci/Dockerfile.build-base \
-        --build-arg "GO_IMAGE=$BASE_IMAGE_REGISTRY/golang:1.27.3-bookworm" \
+        --build-arg "GO_IMAGE=$BASE_IMAGE_REGISTRY/golang:1.27.4-bookworm" \
         -t "$GO_BUILD_IMAGE-$arch" ci
     [[ "$(docker image inspect --format '{{.Architecture}}' "$GO_BUILD_IMAGE-$arch")" == "$arch" ]]
     docker push "$GO_BUILD_IMAGE-$arch"

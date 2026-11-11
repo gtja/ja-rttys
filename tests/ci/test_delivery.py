@@ -54,7 +54,7 @@ class DeliveryTest(unittest.TestCase):
         with patch.object(deploy, 'check_running_files'), patch.object(deploy, 'health'), \
              patch.object(deploy, 'systemctl', return_value='0') as ctl, \
              patch.object(deploy, 'wait_ready', side_effect=readiness):
-            result = deploy.upgrade(self.config, self.new, self.metadata, self.backup)
+            result = deploy.upgrade(self.config, self.new, self.metadata, self.backup, backup_db=True)
         return result, ctl
 
     def test_success_backs_up_stopped_database_and_installs_selected_binary(self):
@@ -82,13 +82,13 @@ class DeliveryTest(unittest.TestCase):
         with database_connection(self.database) as db:
             self.assertEqual(db.execute('SELECT value FROM proof').fetchall(), [('original',), ('new-write',)])
 
-    def test_unsupported_old_schema_restarts_unchanged_service(self):
+    def test_unsupported_old_schema_leaves_service_running(self):
         with database_connection(self.database) as db:
             db.execute('PRAGMA user_version=2')
         result, ctl = self.run_upgrade()
-        self.assertEqual((result['status'], result['rollback']), ('failed', 'passed'))
+        self.assertEqual((result['status'], result['rollback']), ('failed', 'not_needed'))
         self.assertEqual(self.binary.read_bytes(), b'old-server')
-        self.assertIn(unittest.mock.call('start', 'test-only'), ctl.call_args_list)
+        ctl.assert_not_called()
 
     def test_unexpected_migration_blocks_unsafe_binary_downgrade(self):
         def readiness(config, digest):
@@ -119,6 +119,15 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(metadata['source_commit'], COMMIT)
         self.assertEqual(metadata['identity_schema'], 4)
         self.assertFalse(metadata['pushed'])
+
+    def test_native_package_has_no_runtime_image_dependency(self):
+        directory = self.root / 'native'
+        directory.mkdir()
+        (directory / 'rttys').write_bytes(ELF_AMD64)
+        metadata = package.bundle(directory, 'v5.6.0.261111', COMMIT, 'amd64')
+        self.assertEqual(metadata['delivery_type'], 'native')
+        self.assertEqual(metadata['image'], '')
+        self.assertEqual(metadata['binary_sha256'], deploy.sha256(directory / 'rttys'))
 
     def test_packaging_rejects_wrong_binary_architecture(self):
         directory = self.root / 'wrong-arch'

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+[[ $EUID == 0 ]] || { echo 'Run as root' >&2; exit 1; }
+command -v python3 >/dev/null
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+[[ -f $here/rtty-command.py ]] || { echo 'Missing rtty-command.py' >&2; exit 1; }
+target=/usr/local/bin/rtty
+legacy=/usr/local/libexec/ja-rtty/rtty-legacy
+[[ ! -L $target && ! -L /usr/local/libexec/ja-rtty && ! -L $legacy ]] || { echo 'Inspect existing symlinks before installing' >&2; exit 1; }
+if [[ -f $here/SHA256SUMS ]]; then
+  (cd "$here" && sha256sum --status -c SHA256SUMS)
+fi
+if [[ ! -x /usr/local/bin/rtty-tenant-poc ]]; then
+  case $(uname -m) in aarch64|arm64) arch=arm64;; x86_64|amd64) arch=amd64;; *) echo 'Unsupported architecture' >&2; exit 1;; esac
+  [[ -f $here/bin/rtty-linux-$arch ]] || { echo 'Extract the complete client package first' >&2; exit 1; }
+  install -m 0755 "$here/bin/rtty-linux-$arch" /usr/local/bin/rtty-tenant-poc
+fi
+if [[ -e $target ]] && ! grep -aq "^# JA_RTTY_UNIFIED_COMMAND_V1$" "$target"; then
+  magic=$(od -An -tx1 -N4 "$target" | tr -d ' \n')
+  [[ $magic == 7f454c46 ]] || { echo 'Existing rtty is a custom script; refusing to replace it' >&2; exit 1; }
+  if [[ -e $legacy ]]; then
+    cmp -s "$legacy" "$target" || { echo 'Legacy backup differs; inspect before replacement' >&2; exit 1; }
+  else
+    install -d -m 0755 /usr/local/libexec/ja-rtty
+    install -m 0755 "$target" "$legacy"
+  fi
+fi
+install -m 0755 "$here/rtty-command.py" /usr/local/bin/.rtty-command.next
+mv -f /usr/local/bin/.rtty-command.next "$target"
+echo 'Installed unified rtty command. Legacy startup is preserved in /usr/local/libexec/ja-rtty/rtty-legacy.'

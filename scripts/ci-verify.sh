@@ -6,23 +6,13 @@ source ci/base-images.sh
 : "${CI_RUN_ID:?Set a unique CI_RUN_ID to rerun verification}"
 [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 mkdir -p out/verify
-run_hash=$(python3 -c 'import hashlib,os; print(hashlib.sha256(os.environ["CI_RUN_ID"].encode()).hexdigest()[:16])')
-image="ja-rttys-verify:$run_hash"
-container=''
-cleanup() {
-    [[ -z "$container" ]] || docker rm -fv "$container" >/dev/null
-    docker image rm "$image" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
 export DOCKER_BUILDKIT=1
 bash ci/ensure-builder.sh
-docker buildx build --builder "$RTTYS_BUILDER" --load --target verify --build-arg "CI_RUN_ID=$CI_RUN_ID" \
+docker buildx build --builder "$RTTYS_BUILDER" --target verification --output type=local,dest=out/verify --build-arg "CI_RUN_ID=$CI_RUN_ID" \
     --build-arg "NODE_BUILD_IMAGE=$NODE_BUILD_IMAGE" \
     --build-arg "GO_BUILD_IMAGE=$GO_BUILD_IMAGE" \
     --build-arg "RUNTIME_IMAGE=$RUNTIME_IMAGE" \
-    -t "$image" . 2>&1 | tee out/verify/docker-build.log
-container=$(docker create "$image" /bin/true)
-docker cp "$container:/ci/." out/verify/
+    . 2>&1 | tee out/verify/docker-build.log
 python3 - <<'PY'
 import importlib.util
 import json

@@ -32,6 +32,11 @@ func main() {
 		Usage:   "The server side for rtty",
 		Version: RttysVersion,
 		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "device-auth-mode", Usage: "token (default) or compat for device registration only"},
+			&cli.StringFlag{Name: "device-compat-tenant", Usage: "receiving tenant ID for compatibility registration"},
+			&cli.BoolFlag{Name: "device-compat-plaintext", Usage: "accept legacy plaintext TCP on device port in compat mode only"},
+			&cli.BoolFlag{Name: "device-compat-auto-enroll", Usage: "allow unknown legacy IDs in the compatibility tenant (limit1000)"},
+			&cli.StringFlag{Name: "mender-config", Usage: "private Mender bridge JSON configuration"},
 			&cli.StringFlag{Name: "tenant-db", Usage: "absolute path to SQLite identity store (required)"},
 			&cli.StringFlag{Name: "bootstrap-password-file", Usage: "initial admin password file; used only for an empty database"},
 			&cli.StringFlag{Name: "mcp-url", Usage: "canonical HTTPS URL ending in /mcp; enables authenticated terminal MCP"},
@@ -177,6 +182,7 @@ func cmdAction(c context.Context, cmd *cli.Command) error {
 		return err
 	}
 
+	cfg.MenderConfig = cmd.String("mender-config")
 	if cfg.TenantDB == "" || !filepath.IsAbs(cfg.TenantDB) {
 		return fmt.Errorf("tenant-db must be an explicit absolute path")
 	}

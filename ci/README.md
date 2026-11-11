@@ -1,11 +1,23 @@
+# 原生交付与 Jenkins 更新入口
+
+默认交付 Linux amd64/arm64 原生可执行文件及校验包，不发布应用镜像。
+构建阶段继续使用私有 Go/Node 工具链缓存。`test` 构建自动分配正式版本号。
+公网 rtty 的认证检查、首次 schema 迁移、手动更新及回退方案见
+[原生程序动态更新](../docs/native-update.md)。
+
+Jenkins 人工 dev/test 构建可选 `RTTY_ACTION=check`，使用现有
+`public-aliyun-server-1` 凭证只读检查 `47.111.155.82`。
+仅人工 test 构建可选 `RTTY_ACTION=deploy`，默认 `skip`。
+`PUBLISH_IMAGE=true` 是按需附加的镜像交付选项；下文镜像发布说明仅适用于此选项。
+
 # Jenkins CI/CD 初版
 
 流水线读取仓库根目录的 [Jenkinsfile](../Jenkinsfile)。参考已有的
 `ja-alarm-mqtt-kafka-bridge` 和 `defenseAI` Jenkins 实现，复用源码检出、凭据 ID、
 105 构建主机及版本追溯方式。本仓库保留单进程 SQLite、systemd 部署方式。
 
-`test` 每次推送自动验证、双架构构建并发布到阿里云；其他分支默认只验证和出包，
-可通过 `PUBLISH_IMAGE` 显式发布。`DEPLOY_DEV=false`，部署仍需人工开启。
+`test` 每次推送自动验证、预留正式版本并交付双架构原生程序；其他分支默认验证和出包，
+所有可信分支均可通过 `PUBLISH_IMAGE` 额外发布镜像。`DEPLOY_DEV=false`，部署仍需人工开启。
 2026-10-26 已创建 [ja-rttys 多分支任务](http://172.21.30.114:3214/job/ja-rttys/)，
 修复分支的 [首轮构建 #1](http://172.21.30.114:3214/job/ja-rttys/job/codex%252Fsecurity-scan-20261024/1/) 成功。
 dev 开发环境目标为 **172.21.30.105**，与 204 上的租户功能测试实例分开。
@@ -25,10 +37,10 @@ dev 开发环境目标为 **172.21.30.105**，与 204 上的租户功能测试�
    `go mod verify`、Go 回归、`go vet`、`govulncheck` 及真实 HTTPS/TLS/WebSocket、OAuth/MCP 本地端到端验证。
    仅排除需要外部客户端的手工压力用例 `TestRttysStress`。任一检查失败均阻止出包及部署。
    每次构建传入独立 `CI_RUN_ID`，重新执行审计与回归。
-4. 从同一提交交叉编译 Linux amd64、arm64，无需 QEMU；检查镜像架构、二进制 ELF 架构及源码 revision。
+4. 从同一提交交叉编译 Linux amd64、arm64，无需 QEMU；默认直接导出并检查二进制 ELF 架构及源码 revision。
    出包包含二进制、示例配置、systemd unit、操作说明、manifest 和 SHA256。
-   各架构 `image.json` 记录源码、二进制 SHA、镜像 ID；仅推送成功后记录 digest 和 `pushed=true`。
-5. `test` 自动发布，其他可信分支如显式启用 `PUBLISH_IMAGE`，使用临时 `DOCKER_CONFIG` 登录、推送，
+   各架构 `release.json` 和 `manifest.json` 记录源码及二进制 SHA；可选镜像的 `image.json` 另记镜像 ID/digest。
+5. 可信分支如显式启用 `PUBLISH_IMAGE`，使用临时 `DOCKER_CONFIG` 登录、推送，
    两个架构均成功后发布同版本多架构索引，并在结束时删除登录信息。
 6. 如人工在 `dev` 显式启用 `DEPLOY_DEV`，使用对应 amd64 包升级 105 上独立的开发实例。
 
@@ -36,7 +48,7 @@ dev 开发环境目标为 **172.21.30.105**，与 204 上的租户功能测试�
 | --- | --- | --- | --- |
 | dev | 是 | 显式开启：`registry.jingan.com:32008/ja/ja-rttys` | 仅人工启用后升级 105 开发实例 |
 | master | 是 | 显式开启：`registry.jingan.com:32008/ja/ja-rttys` | 禁用 |
-| test | 是 | 自动：`jingan-registry.cn-hangzhou.cr.aliyuncs.com/jingansi/ja-rttys` | 禁用 |
+| test | 是 | 显式开启：`jingan-registry.cn-hangzhou.cr.aliyuncs.com/jingansi/ja-rttys` | 仅人工 test，`RTTY_ACTION=deploy` |
 | release | 是 | 显式开启：`jingan-registry.cn-hangzhou.cr.aliyuncs.com/jingansi/ja-rttys` | 禁用 |
 | 其他分支/PR | 是 | 禁用 | 禁用 |
 
@@ -70,9 +82,9 @@ Dockerfile 也使用相同默认值；`NODE_BUILD_IMAGE`、`GO_BUILD_IMAGE`、`R
 | 用途 | 镜像 |
 | --- | --- |
 | 前端 | `registry.jingan.com:32008/ja/node:22-bookworm-slim` |
-| Go 编译和验证 | `registry.jingan.com:32008/ja/ja-rttys-build:go1.27.3-vuln1.9.0-v1` |
+| Go 编译和验证 | `registry.jingan.com:32008/ja/ja-rttys-build:go1.27.4-vuln1.9.0-v1` |
 | 最终运行镜像 | `registry.jingan.com:32008/ja/alpine:3.22` |
-| 构建工具镜像的原始 Go 基础镜像 | `registry.jingan.com:32008/ja/golang:1.27.3-bookworm` |
+| 构建工具镜像的原始 Go 基础镜像 | `registry.jingan.com:32008/ja/golang:1.27.4-bookworm` |
 
 基础镜像维护与日常 CI 分开。需要更新版本时，在有 Docker Hub 访问能力、
 且已经登录内网仓库的 105 上，于 `/data1/wanghaoyang/ja-rttys` 执行：
@@ -85,7 +97,7 @@ UPSTREAM_IMAGE_PREFIX=docker.m.daocloud.io/library bash ci/mirror-base-images.sh
 
 该脚本从同一上游 digest 拉取每种镜像的 amd64、arm64 版本，分别 tag、推送到 `ja/`，
 再合成双架构 manifest。随后用 [Dockerfile.build-base](Dockerfile.build-base)
-生成两种架构的 Go 工具镜像；它包含 Go 1.27.3、Python 3、OpenSSL 和预装的
+生成两种架构的 Go 工具镜像；它包含 Go 1.27.4、Python 3、OpenSSL 和预装的
 govulncheck v1.9.0。交叉编译 govulncheck，arm64 基础镜像构建无需 QEMU。
 基础工具版本更新时应使用新 tag，并同步修改 `base-images.sh` 和 Dockerfile 的默认值。
 
@@ -99,7 +111,7 @@ govulncheck v1.9.0。交叉编译 govulncheck，arm64 基础镜像构建无需 Q
 构建器使用内网的 `ja/buildkit:v0.30.0`，缓存保存在它自己的 Docker volume 中，上限约 20GB。
 不会修改 Docker daemon、重启 Docker 或切换其他项目的默认构建器；可用
 `RTTYS_BUILDER`、`RTTYS_BUILDKIT_IMAGE` 覆盖构建器名称和镜像。
-脚本使用 `--load` 将最终镜像导入本机 Docker，以保留镜像校验和二进制提取步骤。
+默认使用 Buildx local exporter 直接导出验证报告与程序；只有可选镜像构建才使用 `--load`。
 Buildx 元数据默认位于 `$HOME/.config/ja-rttys/buildx`，与镜像推送时临时使用的
 `DOCKER_CONFIG` 分开，登录和清理发布凭据不会丢失构建器配置或缓存。
 
@@ -113,7 +125,7 @@ exclusive 标签为 `ja-rttys-builder-105`，工作目录 `/data1/wanghaoyang/ja
 
 导入 [jenkins-multibranch.xml](jenkins-multibranch.xml)，任务名称建议 `ja-rttys`。
 配置按每 5 分钟扫描，初始包含 `master dev test release codex/security-scan-20261024`；
-只有存在 Jenkinsfile 的分支会创建子任务。默认参数在 test 会执行验证、出包和发布。
+只有存在 Jenkinsfile 的分支会创建子任务。默认参数在 test 会执行验证和原生出包。
 上述任务已导入现有 114 Jenkins；安全修复和流水线现已合入基于最新 master 建立的 `dev`，
 master 分支未改动。推送 dev 后由多分支扫描创建对应构建任务。其他 Jenkins 安装可使用此 XML 接入。
 
@@ -124,6 +136,7 @@ master 分支未改动。推送 dev 后由多分支扫描创建对应构建任�
 | `github-pat` | Username/password | GitHub Branch Source / HTTPS 检出、发布版本标签预留 |
 | `registry-jingan-com` | Username/password | master/dev 私仓推送 |
 | `public-aliyun-registry-new` | Username/password | test/release 指定阿里云实例推送 |
+| `public-aliyun-server-1` | Username/password | 公网 rtty 只读检查及可选 test 更新 |
 | `ssh-105` | Username/password | 可选的独立 dev 实例升级；账号需有该主机的 root 权限 |
 
 需要 Pipeline、Git/GitHub Branch Source、Credentials Binding；启用部署时构建节点还需 OpenSSH 和 sshpass。
@@ -151,14 +164,14 @@ bootstrap 文件已删除。管理员凭据及 TLS 私钥不进入仓库或 Jenk
 部署前校验包 SHA256、内层二进制 SHA256、源码提交、架构和 schema；
 核对 systemd MainPID 运行的是配置中的原二进制，并实际打开了指定数据库。
 目标目录使用 `flock` 锁，避免不同分支同时升级同一实例。
-停止单实例后备份旧二进制和 SQLite，再原子替换二进制并启动。
+停止单实例后保留旧二进制用于回退，再原子替换程序并启动。普通更新始终复用配置中同一个数据库文件，不复制数据库；只有显式传入 `--backup-db` 才额外生成 SQLite 快照。发布回执中的 `database` 为复用路径，`database_backup` 在未请求快照时为 `null`。
 验证 `/proc/<MainPID>/exe` 的 SHA256、HTTPS 登录页面及未登录 `/api/me` 的 401 边界。
 
 验收失败会恢复旧二进制并重新验证，流水线仍报告失败；新产生的数据库写入不会被自动覆盖。
 仅支持数据库与包声明相同 schema 的升级，当前包为 v4；端到端门禁会核对真实数据库版本与包声明。
 v3 首次升级到包含 OAuth/MCP 的 v4 时，同 schema 部署门禁会拒绝自动升级。需安排维护窗口，停止单实例并备份数据库、旧二进制，用新程序完成并验收迁移后再启用 v4 的常规发布；不要跳过 schema 检查。
 若新程序意外修改 schema，保持服务停止并报告回滚失败，
-由运维使用保存的数据库和旧二进制人工恢复，避免旧程序读写不兼容结构。
+结构迁移须单独安排，并在迁移前显式制作数据库快照；由运维按迁移方案决定恢复，避免旧程序读写不兼容结构或覆盖迁移后新增数据。
 备份和结果回执保留在目标机，数据库、密码和私钥不进入 Jenkins 归档。
 
 升级期间终端/WebSocket 会断开；本次 Cookie 调整需要用户重新登录。

@@ -18,9 +18,13 @@ internal/server/assets/dist
 *.db
 *.db-*
 *.pem
+# Public trust bundle only; private keys remain ignored.
+!certs/trusted-ca.pem
 *.fixture.json
 credentials*
 access.txt
 evidence/
 out/
 __pycache__/
+
+.DS_Store
