@@ -18,7 +18,7 @@ def sha256(path):
         return digest.hexdigest()
 
 
-def bundle(directory, version, commit, arch, image, image_id):
+def bundle(directory, version, commit, arch, image='', image_id=''):
     directory = Path(directory)
     with (directory / 'rttys').open('rb') as source:
         header = source.read(20)
@@ -27,13 +27,14 @@ def bundle(directory, version, commit, arch, image, image_id):
     metadata = dict(service='ja-rttys', version=version, source_commit=commit,
                     architecture=arch, identity_schema=IDENTITY_SCHEMA, image=image,
                     image_id=image_id, binary_sha256=sha256(directory / 'rttys'),
-                    pushed=False)
+                    delivery_type='image' if image else 'native', pushed=False)
     (directory / 'manifest.json').write_text(json.dumps(metadata, indent=2) + '\n')
     archive = directory / f'ja-rttys-{version}-linux-{arch}.tar.gz'
     with tarfile.open(archive, 'w:gz') as tar:
         tar.add(directory / 'rttys', arcname='rttys')
         tar.add(directory / 'manifest.json', arcname='manifest.json')
-        for path in ['deploy/rttys.conf', 'deploy/rttys.service', 'README-TENANT.md', 'README-MCP.md']:
+        for path in ['deploy/rttys.conf', 'deploy/rttys.service', 'README-TENANT.md', 'README-MCP.md',
+                     'docs/native-update.md', 'scripts/ci-deploy.py', 'ci/deploy-rtty.example.json']:
             tar.add(path, arcname=Path(path).name)
     (directory / (archive.name + '.sha256')).write_text(sha256(archive) + '  ' + archive.name + '\n')
     return metadata
@@ -45,9 +46,12 @@ if __name__ == '__main__':
         path = directory / 'image.json'
         metadata = json.loads(path.read_text())
         metadata.update(pushed=True, digest=os.environ['IMAGE_DIGEST'])
+    elif sys.argv[1:] == ['--native']:
+        metadata = bundle(directory, os.environ['PACKAGE_VERSION'], os.environ['SOURCE_COMMIT'],
+                          os.environ['TARGET_ARCH'])
     elif not sys.argv[1:]:
         metadata = bundle(directory, os.environ['PACKAGE_VERSION'], os.environ['SOURCE_COMMIT'],
                           os.environ['TARGET_ARCH'], os.environ['IMAGE_NAME'], os.environ['IMAGE_ID'])
     else:
-        raise SystemExit('Usage: ci-package.py [--published]')
-    (directory / 'image.json').write_text(json.dumps(metadata, indent=2) + '\n')
+        raise SystemExit('Usage: ci-package.py [--published|--native]')
+    (directory / ('release.json' if sys.argv[1:] == ['--native'] else 'image.json')).write_text(json.dumps(metadata, indent=2) + '\n')

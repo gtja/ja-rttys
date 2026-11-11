@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Upgrade one existing Linux systemd instance. No provisioning or automatic DB downgrade."""
+"""Upgrade binaries while reusing the existing database; snapshots are opt-in."""
 import argparse
 from contextlib import closing
 import fcntl
@@ -31,6 +31,16 @@ def sha256(path):
 def schema(path):
     with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=5)) as db:
         return db.execute('PRAGMA user_version').fetchone()[0]
+
+
+def schema_header(path):
+    # The service holds an exclusive SQLite connection. Read only the stable
+    # header for early rejection; recheck through SQLite after stopping it.
+    with Path(path).open('rb') as stream:
+        header = stream.read(100)
+    if len(header) != 100 or header[:16] != b'SQLite format 3\0':
+        raise ValueError('Invalid SQLite database header')
+    return int.from_bytes(header[60:64], 'big')
 
 
 def load_config(path):
@@ -105,10 +115,15 @@ def systemctl(*args):
     return subprocess.check_output(['systemctl', *args], text=True, stderr=subprocess.STDOUT).strip()
 
 
+def main_pid(config):
+    # Older systemd releases do not support `systemctl show --value`.
+    return int(systemctl('show', config['service'], '--property=MainPID').split('=', 1)[-1])
+
+
 def wait_ready(config, digest):
     for attempt in range(15):
         try:
-            pid = int(systemctl('show', config['service'], '--property=MainPID', '--value'))
+            pid = main_pid(config)
             if pid <= 0 or sha256('/proc/{}/exe'.format(pid)) != digest:
                 raise RuntimeError('Running binary differs from selected package')
             health(config)
@@ -121,7 +136,7 @@ def wait_ready(config, digest):
 def check_running_files(config, old_digest):
     database = Path(config['database'])
     systemctl('is-active', '--quiet', config['service'])
-    pid = int(systemctl('show', config['service'], '--property=MainPID', '--value'))
+    pid = main_pid(config)
     if pid <= 0 or sha256('/proc/{}/exe'.format(pid)) != old_digest:
         raise RuntimeError('Configured binary differs from active service')
     # Bind the configured database to the running process before stopping it.
@@ -129,28 +144,36 @@ def check_running_files(config, old_digest):
         raise RuntimeError('Configured database is not open in the active service')
 
 
-def upgrade(config, binary, metadata, backup):
+def upgrade(config, binary, metadata, backup, backup_db=False):
     target, database = Path(config['binary']), Path(config['database'])
     expected_schema = metadata['identity_schema']
     old_info = target.stat()
     old_digest = sha256(target)
     check_running_files(config, old_digest)
     health(config)
+    actual_schema = schema_header(database)
+    if actual_schema != expected_schema:
+        return dict(status='failed', rollback='not_needed', backup=str(backup),
+                    error='Identity schema mismatch: running database v{}, package v{}; migration required before deployment; service was not stopped'.format(actual_schema, expected_schema))
     shutil.copy2(target, backup / 'rttys.previous')
+    (backup / 'manifest.json').write_text(json.dumps(metadata, indent=2) + '\n')
     stopped = False
     installed = False
+    snapshot = None
     try:
         # Set before requesting stop: a partial stop failure still needs recovery.
         stopped = True
         systemctl('stop', config['service'])
-        if int(systemctl('show', config['service'], '--property=MainPID', '--value')) != 0:
+        if main_pid(config) != 0:
             raise RuntimeError('Service did not stop')
         actual_schema = schema(database)
         if actual_schema != expected_schema:
             raise RuntimeError('Identity schema mismatch: running database v{}, package v{}; only same-schema upgrades are supported'.format(actual_schema, expected_schema))
-        with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as source:
-            with closing(sqlite3.connect(str(backup / 'identity.db'))) as destination:
-                source.backup(destination)
+        if backup_db:
+            with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as source:
+                with closing(sqlite3.connect(str(backup / 'identity.db'))) as destination:
+                    source.backup(destination)
+            snapshot = str(backup / 'identity.db')
         with tempfile.NamedTemporaryFile(dir=target.parent, delete=False, prefix='.rttys-ci-') as output:
             staging = Path(output.name)
             try:
@@ -166,15 +189,15 @@ def upgrade(config, binary, metadata, backup):
                 staging.unlink(missing_ok=True)
         systemctl('start', config['service'])
         wait_ready(config, metadata['binary_sha256'])
-        return dict(status='passed', source_commit=metadata['source_commit'], rollback='not_needed', backup=str(backup))
+        return dict(status='passed', source_commit=metadata['source_commit'], rollback='not_needed', backup=str(backup), database=str(database), database_backup=snapshot)
     except Exception as exc:
-        result = dict(status='failed', error=str(exc), rollback='not_needed', backup=str(backup))
+        result = dict(status='failed', error=str(exc), rollback='not_needed', backup=str(backup), database=str(database), database_backup=snapshot)
         if stopped:
             try:
                 systemctl('stop', config['service'])
                 # Never run an older binary against a changed schema or overwrite new user data.
                 if installed and schema(database) != expected_schema:
-                    raise RuntimeError('Schema changed; leave stopped for manual recovery from backup')
+                    raise RuntimeError('Schema changed; leave stopped for manual database recovery; existing data has not been overwritten')
                 with tempfile.NamedTemporaryFile(dir=target.parent, delete=False, prefix='.rttys-rollback-') as output:
                     restore = Path(output.name)
                 try:
@@ -197,6 +220,7 @@ def main():
     parser.add_argument('--sha256', required=True)
     parser.add_argument('--commit', required=True)
     parser.add_argument('--config', default='/etc/rttys/ci-deploy.json', type=Path)
+    parser.add_argument('--backup-db', action='store_true', help='Explicitly snapshot the database before updating; normal updates reuse it without copying')
     args = parser.parse_args()
     result = dict(status='failed', rollback='not_started')
     try:
@@ -214,7 +238,7 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             binary, metadata = unpack(args.package, args.sha256, args.commit, staging)
             backup = Path(tempfile.mkdtemp(prefix='release-' + args.commit[:12] + '-', dir=root))
-            result = upgrade(config, binary, metadata, backup)
+            result = upgrade(config, binary, metadata, backup, backup_db=args.backup_db)
             (backup / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     except Exception as exc:
         result.update(error=str(exc))

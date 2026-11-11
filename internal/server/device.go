@@ -19,6 +19,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
@@ -29,6 +30,7 @@ import (
 )
 
 type DeviceInfo struct {
+	Link      string `json:"link"`
 	Group     string `json:"group"`
 	ID        string `json:"id"`
 	Connected uint32 `json:"connected"`
@@ -39,15 +41,19 @@ type DeviceInfo struct {
 }
 
 type Device struct {
-	wireID    string
-	group     string
-	id        string
-	proto     uint8
-	desc      string
-	timestamp int64
-	uptime    uint32
-	token     string
-	heartbeat time.Duration
+	link            string
+	wireID          string
+	group           string
+	id              string
+	proto           uint8
+	desc            string
+	timestamp       int64
+	uptime          atomic.Uint32
+	token           string
+	heartbeat       time.Duration
+	presenceID      int64
+	presenceSeen    int64
+	presenceTimeout atomic.Bool
 
 	users          sync.Map
 	pending        sync.Map
@@ -110,7 +116,7 @@ func (srv *RttyServer) ListenDevices() {
 	}
 	defer ln.Close()
 
-	if cfg.SslCert != "" && cfg.SslKey != "" {
+	if cfg.SslCert != "" && cfg.SslKey != "" && !(cfg.DeviceAuthMode == "compat" && cfg.DeviceCompatPlaintext) {
 		cert, err := tls.LoadX509KeyPair(cfg.SslCert, cfg.SslKey)
 		if err != nil {
 			log.Fatal().Msg(err.Error())
@@ -200,11 +206,18 @@ func handleDeviceConnection(srv *RttyServer, conn net.Conn) {
 	log.Info().Msgf("device '%s' registered, group '%s' proto %d, heartbeat %v",
 		dev.id, dev.group, dev.proto, dev.heartbeat)
 
+	if srv.tenant != nil {
+		srv.tenant.collectRuntime(dev)
+	}
+
 	for {
 		conn.SetReadDeadline(time.Now().Add(dev.heartbeat * 3 / 2))
 
 		typ, data, err = dev.ReadMsg()
 		if err != nil {
+			if e, ok := err.(net.Error); ok && e.Timeout() {
+				dev.presenceTimeout.Store(true)
+			}
 			if err != io.EOF {
 				log.Error().Msgf("read msg from device '%s' fail: %v", dev.id, err)
 			}
@@ -223,6 +236,9 @@ func handleDeviceConnection(srv *RttyServer, conn net.Conn) {
 		if err != nil {
 			log.Error().Msg(err.Error())
 			return
+		}
+		if srv.tenant != nil {
+			srv.tenant.presenceSeen(dev)
 		}
 	}
 }
@@ -247,6 +263,9 @@ func (dev *Device) Close(srv *RttyServer) {
 		log.Error().Msgf("device '%s' disconnected", dev.id)
 		dev.cancel()
 		dev.conn.Close()
+		if srv.tenant != nil {
+			srv.tenant.presenceEnd(dev)
+		}
 		srv.DelDevice(dev)
 	})
 }
@@ -377,14 +396,14 @@ func parseHeartbeat(dev *Device, data []byte) bool {
 				if len(val) != 4 {
 					return false
 				}
-				dev.uptime = binary.BigEndian.Uint32(val)
+				dev.uptime.Store(binary.BigEndian.Uint32(val))
 			}
 		}
 	} else {
 		if len(data) < 4 {
 			return false
 		}
-		dev.uptime = binary.BigEndian.Uint32(data[:4])
+		dev.uptime.Store(binary.BigEndian.Uint32(data[:4]))
 	}
 
 	return true

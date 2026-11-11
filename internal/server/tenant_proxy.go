@@ -89,7 +89,7 @@ func (a *APIServer) secureProxyRedirect(c *gin.Context) {
 		c.JSON(503, gin.H{"error": "proxy requires a separate wildcard DNS hostname"})
 		return
 	}
-	dev := a.srv.GetDevice(p.Tenant, d.ID)
+	dev := a.srv.GetDeviceLink(p.Tenant, d.ID, c.Query("link"))
 	if dev == nil {
 		c.Status(503)
 		return
@@ -103,7 +103,7 @@ func (a *APIServer) secureProxyRedirect(c *gin.Context) {
 	}
 	ctx, cancel := context.WithCancel(dev.ctx)
 	ses := &secureProxy{ctx: ctx, cancel: cancel, dev: dev, target: target, host: host, id: id, cookie: secret}
-	lease, err := auth.attach(p.Session, d.ID, func() { cancel(); secureProxies.Delete(cookieHash) })
+	lease, err := auth.attachFeature(p.Session, d.ID, "web", func() { cancel(); secureProxies.Delete(cookieHash) })
 	if err != nil {
 		cancel()
 		c.Status(403)

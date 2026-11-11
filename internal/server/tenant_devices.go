@@ -75,8 +75,6 @@ func (a *TenantAuth) softDeleteDevice(c *gin.Context) {
 		return
 	}
 	a.revokeLocked("", p.Tenant, id)
-	if dev := a.srv.GetDevice(p.Tenant, id); dev != nil {
-		go dev.Close(a.srv)
-	}
+	a.srv.closeDeviceLinks(p.Tenant, id)
 	c.JSON(200, gin.H{"ok": true, "deleted": true})
 }

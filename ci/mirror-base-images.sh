@@ -14,7 +14,9 @@ publish_manifest() {
     docker manifest push --insecure "$image"
 }
 
-for source_image in node:22-bookworm-slim golang:1.27.3-bookworm alpine:3.22; do
+source_images=(node:22-bookworm-slim golang:1.27.4-bookworm alpine:3.22)
+if [[ ${MIRROR_ONLY_GO:-0} == 1 ]]; then source_images=(golang:1.27.4-bookworm); fi
+for source_image in "${source_images[@]}"; do
     target="$BASE_IMAGE_REGISTRY/$source_image"
     upstream="$source_image"
     [[ -z "$UPSTREAM_IMAGE_PREFIX" ]] || upstream="$UPSTREAM_IMAGE_PREFIX/$source_image"
@@ -23,11 +25,10 @@ for source_image in node:22-bookworm-slim golang:1.27.3-bookworm alpine:3.22; do
     digest=$(docker image inspect --format '{{join .RepoDigests "\n"}}' "$upstream" \
         | awk -v repo="${upstream%:*}@" 'index($0,repo)==1 { print; exit }')
     [[ "$digest" == *@sha256:* ]]
-    index=$(docker manifest inspect "$digest")
     for arch in amd64 arm64; do
-        child=$(printf '%s' "$index" | python3 -c \
-            'import json,sys; arch=sys.argv[1]; print(next(m["digest"] for m in json.load(sys.stdin)["manifests"] if m.get("platform",{}).get("os")=="linux" and m["platform"].get("architecture")==arch))' "$arch")
-        platform_image="${digest%@*}@$child"
+        # Let the daemon resolve each platform from the pinned index, using its
+        # existing proxy/network configuration just like the initial pull.
+        platform_image="$digest"
         docker pull --platform "linux/$arch" "$platform_image"
         [[ "$(docker image inspect --format '{{.Architecture}}' "$platform_image")" == "$arch" ]]
         docker tag "$platform_image" "$target-$arch"
@@ -40,7 +41,7 @@ bash ci/ensure-builder.sh
 for arch in amd64 arm64; do
     docker buildx build --builder "$RTTYS_BUILDER" --load \
         --platform "linux/$arch" -f ci/Dockerfile.build-base \
-        --build-arg "GO_IMAGE=$BASE_IMAGE_REGISTRY/golang:1.27.3-bookworm" \
+        --build-arg "GO_IMAGE=$BASE_IMAGE_REGISTRY/golang:1.27.4-bookworm" \
         -t "$GO_BUILD_IMAGE-$arch" ci
     [[ "$(docker image inspect --format '{{.Architecture}}' "$GO_BUILD_IMAGE-$arch")" == "$arch" ]]
     docker push "$GO_BUILD_IMAGE-$arch"

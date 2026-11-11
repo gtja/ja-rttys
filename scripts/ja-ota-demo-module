@@ -1,0 +1,36 @@
+#!/bin/sh
+# Isolated application OTA acceptance fixture; never updates the base OS.
+set -eu
+state=$1
+files=$2
+base=/opt/ja-ota-demo
+health() {
+    count=0
+    while [ "$count" -lt 15 ]; do
+        if curl --fail --silent http://127.0.0.1:18084/health >/dev/null; then return 0; fi
+        count=$((count+1)); sleep 1
+    done
+    return 1
+}
+switch_to() {
+    ln -s "$1" "$base/current.next"
+    mv -Tf "$base/current.next" "$base/current"
+    systemctl restart ja-ota-demo
+    health
+}
+case "$state" in
+    SupportsRollback) echo Yes ;;
+    NeedsArtifactReboot) echo No ;;
+    ArtifactInstall)
+        mkdir -p "$files/tmp"
+        readlink "$base/current" > "$files/tmp/previous"
+        release=$(mktemp -d "$base/releases/release.XXXXXX")
+        chmod 0755 "$release"
+        install -m 0644 "$files/files/app.py" "$release/app.py"
+        switch_to "$release"
+        ;;
+    ArtifactCommit) health ;;
+    ArtifactRollback)
+        if [ -f "$files/tmp/previous" ]; then switch_to "$(cat "$files/tmp/previous")"; fi
+        ;;
+esac

@@ -1,5 +1,5 @@
 ARG NODE_BUILD_IMAGE=registry.jingan.com:32008/ja/node:22-bookworm-slim
-ARG GO_BUILD_IMAGE=registry.jingan.com:32008/ja/ja-rttys-build:go1.27.3-vuln1.9.0-v1
+ARG GO_BUILD_IMAGE=registry.jingan.com:32008/ja/ja-rttys-build:go1.27.4-vuln1.9.0-v1
 ARG RUNTIME_IMAGE=registry.jingan.com:32008/ja/alpine:3.22
 FROM --platform=$BUILDPLATFORM ${NODE_BUILD_IMAGE} AS ui
 WORKDIR /rttys/ui
@@ -32,6 +32,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     go build -o /tmp/rttys-tenant ./cmd/rttys \
     && go build -o /tmp/rttys-socket-check ./cmd/tenant-e2e \
     && (RTTY_RUN_SUMMARY=/ci/e2e.json python3 scripts/run-local-e2e.py > /ci/e2e-run.log || (cat /ci/e2e-run.log; exit 1))
+RUN RTTY_BINARY=/tmp/rttys-tenant python3 scripts/run-compat-e2e.py
 COPY --from=ui /npm-audit.json /ci/npm-audit.json
 
 FROM source AS binary
@@ -44,6 +45,12 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     test -n "$TARGETOS" && test -n "$TARGETARCH" \
     && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w -X main.GitCommit=$SOURCE_COMMIT -X main.BuildTime=$BUILD_TIME -X main.RttysVersion=$PACKAGE_VERSION" -o /rttys-bin ./cmd/rttys
+
+FROM scratch AS verification
+COPY --from=verify /ci/ /
+
+FROM scratch AS native
+COPY --from=binary /rttys-bin /rttys
 
 FROM ${RUNTIME_IMAGE} AS runtime
 ARG SOURCE_COMMIT=unknown

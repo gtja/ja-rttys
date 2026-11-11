@@ -75,6 +75,10 @@ finally:
    result['identity_schema']=db.execute('PRAGMA user_version').fetchone()[0]
  result['finished_at']=datetime.datetime.now(datetime.timezone.utc).isoformat()
  (root/'run.json').write_text(json.dumps(result,indent=2));print(json.dumps(result,indent=2))
+ if result.get('error') or any(result.get(key,0)!=0 for key in ['http_exit','socket_exit','mcp_exit']):
+  for name in ['http-run.log','socket-run.log','mcp-run.log','server.log','restart.log']:
+   log=root/name
+   if log.exists():print('\n'+name+'\n'+'\n'.join(log.read_text().splitlines()[-60:]),flush=True)
  if os.environ.get('RTTY_RUN_SUMMARY'):
   summary=pathlib.Path(os.environ['RTTY_RUN_SUMMARY']);summary.parent.mkdir(parents=True,exist_ok=True)
   summary.write_text(json.dumps(result,indent=2))

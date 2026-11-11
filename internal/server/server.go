@@ -33,20 +33,25 @@ type RttyServer struct {
 }
 
 type Config struct {
-	TenantDB              string
-	BootstrapPasswordFile string
-	MCPURL                string
-	MCPClientID           string
-	MCPRedirectURI        string
-	MCPDiagnosticUser     string
-	AddrDev               string
-	AddrUser              string
-	AddrHttpProxy         string
-	ShareBindHost         string
-	SharePublicHost       string
-	SharePortStart        int
-	SharePortEnd          int
-	ShareHostKey          string
+	DeviceAuthMode         string
+	DeviceCompatTenant     string
+	DeviceCompatAutoEnroll bool
+	DeviceCompatPlaintext  bool
+	MenderConfig           string
+	TenantDB               string
+	BootstrapPasswordFile  string
+	AddrDev                string
+	AddrUser               string
+	AddrHttpProxy          string
+	ShareBindHost          string
+	SharePublicHost        string
+	SharePortStart         int
+	SharePortEnd           int
+	ShareHostKey           string
+	MCPURL                 string
+	MCPClientID            string
+	MCPRedirectURI         string
+	MCPDiagnosticUser      string
 
 	HttpProxyRedirURL    string
 	HttpProxyRedirDomain string
@@ -205,21 +210,7 @@ func pprofListenAddress(addr string) (string, error) {
 	return net.JoinHostPort(ip.String(), port), nil
 }
 
-func (srv *RttyServer) GetDevice(group, id string) *Device {
-	srv.mu.RLock()
-	defer srv.mu.RUnlock()
-
-	g := srv.GetGroup(group, false)
-	if g == nil {
-		return nil
-	}
-
-	if v, ok := g.devices.Load(id); ok {
-		return v.(*Device)
-	}
-
-	return nil
-}
+func (srv *RttyServer) GetDevice(group, id string) *Device { return srv.GetDeviceLink(group, id, "") }
 
 func (srv *RttyServer) AddDevice(dev *Device) bool {
 	srv.mu.Lock()
@@ -227,7 +218,7 @@ func (srv *RttyServer) AddDevice(dev *Device) bool {
 
 	g := srv.GetGroup(dev.group, true)
 
-	if _, loaded := g.devices.LoadOrStore(dev.id, dev); loaded {
+	if _, loaded := g.devices.LoadOrStore(deviceConnectionKey(dev.id, dev.link), dev); loaded {
 		return false
 	}
 
@@ -247,7 +238,7 @@ func (srv *RttyServer) DelDevice(dev *Device) {
 		return
 	}
 
-	if deleted := g.devices.CompareAndDelete(dev.id, dev); deleted {
+	if deleted := g.devices.CompareAndDelete(deviceConnectionKey(dev.id, dev.link), dev); deleted {
 		if g.count.Add(-1) == 0 {
 			srv.groups.Delete(dev.group)
 		}

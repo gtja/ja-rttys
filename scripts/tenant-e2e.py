@@ -35,6 +35,13 @@ try:
  a=users['alice'][1];b=users['bob'][1];reader=users['reader'][1];op=users['operator'][1]
  code,da=req(a,'POST','/api/manage/devices',{'wire_id':'same-device','group':'lab','name':'Device A','web_targets':['http://127.0.0.1:8080']});check('enroll A',code,201)
  code,db=req(b,'POST','/api/manage/devices',{'wire_id':'same-device','group':'lab','name':'Device B'});check('same wire ID other tenant',code,201)
+ check('device detail overview',req(a,'GET','/api/devices/'+da['id']+'/overview')[0],200)
+ check('cross tenant overview hidden',req(b,'GET','/api/devices/'+da['id']+'/overview')[0],404)
+ check('viewer binary transfer denied',req(reader,'GET','/api/devices/'+da['id']+'/file-transfer?direction=download&path=/tmp/file')[0],403)
+ check('cross tenant binary transfer hidden',req(b,'GET','/api/devices/'+da['id']+'/file-transfer?direction=download&path=/tmp/file')[0],404)
+ check('viewer files denied',req(reader,'POST','/api/devices/'+da['id']+'/files',{'action':'list','path':'.'})[0],403)
+ check('tenant admin cannot change OS account',req(a,'PUT','/api/manage/devices/'+da['id']+'/operations',{'username':'nvidia','root':'/home/nvidia'})[0],403)
+ check('viewer batch denied',req(reader,'POST','/api/tasks',{'id':'unauthorized','template':'disk','device_ids':[da['id']]})[0],403)
  check('cross tenant device detail',req(b,'GET','/api/dev/'+da['id'])[0],404)
  check('cross tenant device mutation',req(b,'PATCH','/api/manage/devices/'+da['id'],{'disabled':True})[0],404)
  check('cross tenant member mutation',req(b,'PUT','/api/manage/members',{'tenant_id':ta['id'],'user_id':users['bob'][0]['id'],'role':'admin'})[0],403)
