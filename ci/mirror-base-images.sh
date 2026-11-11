@@ -25,11 +25,10 @@ for source_image in "${source_images[@]}"; do
     digest=$(docker image inspect --format '{{join .RepoDigests "\n"}}' "$upstream" \
         | awk -v repo="${upstream%:*}@" 'index($0,repo)==1 { print; exit }')
     [[ "$digest" == *@sha256:* ]]
-    index=$(docker manifest inspect "$digest")
     for arch in amd64 arm64; do
-        child=$(printf '%s' "$index" | python3 -c \
-            'import json,sys; arch=sys.argv[1]; print(next(m["digest"] for m in json.load(sys.stdin)["manifests"] if m.get("platform",{}).get("os")=="linux" and m["platform"].get("architecture")==arch))' "$arch")
-        platform_image="${digest%@*}@$child"
+        # Let the daemon resolve each platform from the pinned index, using its
+        # existing proxy/network configuration just like the initial pull.
+        platform_image="$digest"
         docker pull --platform "linux/$arch" "$platform_image"
         [[ "$(docker image inspect --format '{{.Architecture}}' "$platform_image")" == "$arch" ]]
         docker tag "$platform_image" "$target-$arch"
