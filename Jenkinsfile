@@ -48,7 +48,8 @@ pipeline {
                     env.SOURCE_COMMIT = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
                     env.CI_RUN_ID = "${env.JOB_NAME}-${env.BUILD_NUMBER}-${env.SOURCE_COMMIT}"
                     env.PUBLISH_SELECTED = (!env.CHANGE_ID && params.PUBLISH_IMAGE).toString()
-                    env.RESERVE_VERSION = (!env.CHANGE_ID && (params.PUBLISH_IMAGE || env.PIPELINE_BRANCH == 'test')).toString()
+                    if (params.RTTY_ACTION == 'check' && (params.PUBLISH_IMAGE || params.DEPLOY_DEV)) { error('只读检查不能与发布或部署组合') }
+                    env.RESERVE_VERSION = (!env.CHANGE_ID && params.RTTY_ACTION != 'check' && (params.PUBLISH_IMAGE || env.PIPELINE_BRANCH == 'test')).toString()
                     def publicRegistry = env.PIPELINE_BRANCH in ['test', 'release']
                     env.REGISTRY_HOST = publicRegistry ? 'jingan-registry.cn-hangzhou.cr.aliyuncs.com' : 'registry.jingan.com:32008'
                     env.IMAGE_REGISTRY = "${env.REGISTRY_HOST}/${publicRegistry ? 'jingansi' : 'ja'}"
@@ -116,12 +117,15 @@ python3 -m unittest discover -s tests/ci -p 'test_*.py' -v
                     }
                 }
                 stage('Check internal build images') {
+                    when { expression { params.RTTY_ACTION != 'check' } }
                     steps { sh 'bash ci/check-base-images.sh' }
                 }
                 stage('Security and end-to-end gates') {
+                    when { expression { params.RTTY_ACTION != 'check' } }
                     steps { sh 'bash scripts/ci-verify.sh' }
                 }
                 stage('Package amd64 and arm64') {
+                    when { expression { params.RTTY_ACTION != 'check' } }
                     steps {
                         script {
                             if (env.PUBLISH_SELECTED == 'true') {
