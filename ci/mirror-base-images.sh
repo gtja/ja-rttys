@@ -14,7 +14,9 @@ publish_manifest() {
     docker manifest push --insecure "$image"
 }
 
-for source_image in node:22-bookworm-slim golang:1.27.4-bookworm alpine:3.22; do
+source_images=(node:22-bookworm-slim golang:1.27.4-bookworm alpine:3.22)
+if [[ ${MIRROR_ONLY_GO:-0} == 1 ]]; then source_images=(golang:1.27.4-bookworm); fi
+for source_image in "${source_images[@]}"; do
     target="$BASE_IMAGE_REGISTRY/$source_image"
     upstream="$source_image"
     [[ -z "$UPSTREAM_IMAGE_PREFIX" ]] || upstream="$UPSTREAM_IMAGE_PREFIX/$source_image"

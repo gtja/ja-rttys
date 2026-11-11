@@ -93,6 +93,8 @@ Dockerfile 也使用相同默认值；`NODE_BUILD_IMAGE`、`GO_BUILD_IMAGE`、`R
 bash ci/mirror-base-images.sh
 # 105 无法直连 Docker Hub 时，可显式使用该机已有的镜像代理：
 UPSTREAM_IMAGE_PREFIX=docker.m.daocloud.io/library bash ci/mirror-base-images.sh
+# 仅更新 Go 基础镜像及编译工具，复用现有 Node/Alpine：
+MIRROR_ONLY_GO=1 UPSTREAM_IMAGE_PREFIX=docker.m.daocloud.io/library bash ci/mirror-base-images.sh
 ```
 
 该脚本从同一上游 digest 拉取每种镜像的 amd64、arm64 版本，分别 tag、推送到 `ja/`，
