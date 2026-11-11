@@ -111,7 +111,7 @@ python3 -m unittest discover -s tests/ci -p 'test_*.py' -v
                 stage('Read-only public rtty preflight') {
                     when { expression { (params.RTTY_ACTION ?: 'skip') != 'skip' } }
                     steps {
-                        withCredentials([usernamePassword(credentialsId: 'public-aliyun-server-1', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PASSWORD')]) {
+                        withCredentials([usernamePassword(credentialsId: 'ssh-rtty', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PASSWORD')]) {
                             sh 'bash ci/rtty-remote.sh check'
                         }
                     }
@@ -155,7 +155,7 @@ printf '%s' "$REGISTRY_PASSWORD" | docker login "$REGISTRY_HOST" -u "$REGISTRY_U
                 stage('Update public rtty native service') {
                     when { expression { params.RTTY_ACTION == 'deploy' } }
                     steps {
-                        withCredentials([usernamePassword(credentialsId: 'public-aliyun-server-1', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PASSWORD')]) {
+                        withCredentials([usernamePassword(credentialsId: 'ssh-rtty', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PASSWORD')]) {
                             sh 'bash ci/rtty-remote.sh deploy'
                         }
                     }

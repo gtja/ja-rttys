@@ -2,8 +2,8 @@
 set -euo pipefail
 set +x
 cd "$(dirname "$0")/.."
-: "${DEPLOY_USER:?Bind public-aliyun-server-1 username}"
-: "${DEPLOY_PASSWORD:?Bind public-aliyun-server-1 password}"
+: "${DEPLOY_USER:?Bind ssh-rtty username}"
+: "${DEPLOY_PASSWORD:?Bind ssh-rtty password}"
 action=${1:-check}
 [[ "$action" == check || "$action" == deploy ]]
 [[ "$DEPLOY_USER" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]
