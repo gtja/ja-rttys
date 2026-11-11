@@ -643,7 +643,13 @@ func run() {
 	r.Body.Close()
 	for _, conn := range []net.Conn{c5, c14} {
 		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-		_, e := conn.Read(make([]byte, 1))
+		// Protocol messages written before revocation may remain buffered in TLS.
+		// Verify bounded EOF after draining them, rather than a single read.
+		var e error
+		buffer := make([]byte, 4096)
+		for e == nil {
+			_, e = conn.Read(buffer)
+		}
 		timeout := false
 		if n, ok := e.(net.Error); ok {
 			timeout = n.Timeout()
