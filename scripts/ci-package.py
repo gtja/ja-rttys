@@ -33,7 +33,8 @@ def bundle(directory, version, commit, arch, image='', image_id=''):
     with tarfile.open(archive, 'w:gz') as tar:
         tar.add(directory / 'rttys', arcname='rttys')
         tar.add(directory / 'manifest.json', arcname='manifest.json')
-        for path in ['deploy/rttys.conf', 'deploy/rttys.service', 'README-TENANT.md', 'README-MCP.md', 'docs/native-update.md']:
+        for path in ['deploy/rttys.conf', 'deploy/rttys.service', 'README-TENANT.md', 'README-MCP.md',
+                     'docs/native-update.md', 'scripts/ci-deploy.py', 'ci/deploy-rtty.example.json']:
             tar.add(path, arcname=Path(path).name)
     (directory / (archive.name + '.sha256')).write_text(sha256(archive) + '  ' + archive.name + '\n')
     return metadata
